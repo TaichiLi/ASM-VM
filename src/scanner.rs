@@ -326,6 +326,26 @@ impl Scanner {
                 token_type = TokenType::INSTRUCTION;
                 token_value = TokenValue::DIV;
             },
+            "and" => {
+                token_type = TokenType::INSTRUCTION;
+                token_value = TokenValue::AND;
+            },
+            "or" => {
+                token_type = TokenType::INSTRUCTION;
+                token_value = TokenValue::OR;
+            },
+            "xor" => {
+                token_type = TokenType::INSTRUCTION;
+                token_value = TokenValue::XOR;
+            },
+            "not" => {
+                token_type = TokenType::INSTRUCTION;
+                token_value = TokenValue::NOT;
+            },
+            "neg" => {
+                token_type = TokenType::INSTRUCTION;
+                token_value = TokenValue::NEG;
+            },
             "push" => {
                 token_type = TokenType::INSTRUCTION;
                 token_value = TokenValue::PUSH;

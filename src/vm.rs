@@ -168,33 +168,52 @@ impl VM {
         self.eip = entrance as usize;
     }
 
+    fn parse_register(&mut self) -> Result<*mut i32, &str> {
+        self.go_from_here(1);
+
+        match self.text[self.eip - 1].get_token_value() {
+            TokenValue::EAX => return Ok(&mut self.eax as *mut i32),
+            TokenValue::EBX => return Ok(&mut self.ebx as *mut i32),
+            TokenValue::ECX => return Ok(&mut self.ecx as *mut i32),
+            TokenValue::EDX => return Ok(&mut self.edx as *mut i32),
+            TokenValue::ESI => return Ok(&mut self.esi as *mut i32),
+            TokenValue::EDI => return Ok(&mut self.edi as *mut i32),
+            TokenValue::ESP => return Ok(&mut self.esp as *mut i32),
+            TokenValue::EBP => return Ok(&mut self.ebp as *mut i32),
+            _ => return Err("Flag registers can not be used as source!"),
+        }
+    }
+
+    fn parse_memory(&mut self) -> Result<*mut i32, &str> {
+        if !self.expect_token_type(TokenType::IMMEDIATE_DATA,"immediate data".to_string(), false) {
+            return Err("Only support immediate addressing for accessing memory now!");
+        }
+
+        let mem_add = self.text[self.eip].get_int_value();
+
+        self.go_from_here(1);
+
+        if !self.expect_token_value(TokenValue::RBRACK, "]".to_string(), true) {
+            return Err("Missing right brack \']\'!");
+        }
+
+        return Ok(&mut self.memory[mem_add as usize] as *mut i32);
+    }
+
     fn parse_source(&mut self) -> Result<i32, &str> {
         if self.validate_token_value(TokenValue::LBRACK, true) {
-            if !self.expect_token_type(TokenType::IMMEDIATE_DATA,"immediate data".to_string(), false) {
-                return Err("Only support immediate addressing now!");
+            unsafe {
+                match self.parse_memory(){
+                    Ok(source) => return Ok(*source),
+                    Err(err) => return Err(err),
+                }
             }
-
-            let mem_add = self.text[self.eip].get_int_value();
-
-            self.go_from_here(1);
-
-            if !self.expect_token_value(TokenValue::RBRACK, "]".to_string(), true) {
-                return Err("Missing right brack \']\'!");
-            }
-
-            return Ok(self.memory[mem_add as usize]);
-        } else if self.validate_token_type(TokenType::REGISTER, true) {
-            match self.text[self.eip - 1].get_token_value() {
-                TokenValue::EAX => return Ok(self.eax),
-                TokenValue::EBX => return Ok(self.ebx),
-                TokenValue::ECX => return Ok(self.ecx),
-                TokenValue::EDX => return Ok(self.edx),
-                TokenValue::ESI => return Ok(self.esi),
-                TokenValue::EDI => return Ok(self.edi),
-                TokenValue::ESP => return Ok(self.esp),
-                TokenValue::EBP => return Ok(self.ebp),
-                TokenValue::EIP => return Ok(self.eip as i32),
-                _ => return Err("Flag registers can not be used as source!"),
+        } else if self.validate_token_type(TokenType::REGISTER, false) {
+            unsafe {
+                match self.parse_register() {
+                    Ok(source) => return Ok(*source),
+                    Err(err) => return Err(err),
+                }
             }
         } else if self.validate_token_type(TokenType::IMMEDIATE_DATA, true) {
             return Ok(self.text[self.eip - 1].get_int_value());
@@ -206,31 +225,9 @@ impl VM {
 
     fn parse_destination(&mut self) -> Result<*mut i32, &str> {
         if self.validate_token_value(TokenValue::LBRACK, true) {
-            if !self.expect_token_type(TokenType::IMMEDIATE_DATA,"immediate data".to_string(), false) {
-                return Err("Only support immediate addressing now!");
-            }
-
-            let mem_add = self.text[self.eip].get_int_value();
-
-            self.go_from_here(1);
-
-            if !self.expect_token_value(TokenValue::RBRACK, "]".to_string(), true) {
-                return Err("Missing right brack \']\'!");
-            }
-
-            return Ok(&mut self.memory[mem_add as usize] as *mut i32);
-        } else if self.validate_token_type(TokenType::REGISTER, true) {
-            match self.text[self.eip - 1].get_token_value() {
-                TokenValue::EAX => return Ok(&mut self.eax as *mut i32),
-                TokenValue::EBX => return Ok(&mut self.ebx as *mut i32),
-                TokenValue::ECX => return Ok(&mut self.ecx as *mut i32),
-                TokenValue::EDX => return Ok(&mut self.edx as *mut i32),
-                TokenValue::ESI => return Ok(&mut self.esi as *mut i32),
-                TokenValue::EDI => return Ok(&mut self.edi as *mut i32),
-                TokenValue::ESP => return Ok(&mut self.esp as *mut i32),
-                TokenValue::EBP => return Ok(&mut self.ebp as *mut i32),
-                _ => return Err("EIP and flag registers can not be used as destination"),
-            }
+            return self.parse_memory();
+        } else if self.validate_token_type(TokenType::REGISTER, false) {
+            return self.parse_register();
         } else {
             self.error_report(&format!("parse_destination Unexpected token: {}", self.text[self.eip].get_token_name()));
             return Err("Unexpected token: {}");
@@ -253,7 +250,7 @@ impl VM {
         }
     }
 
-    fn arithmetic(&mut self) {
+    fn binary_operation(&mut self) {
         let instruction = self.text[self.eip].to_owned();
         self.go_from_here(1);
 
@@ -267,8 +264,88 @@ impl VM {
             let result = match instruction.get_token_value() {
                 TokenValue::ADD => *destination + self.parse_source().unwrap(),
                 TokenValue::SUB => *destination - self.parse_source().unwrap(),
-                TokenValue::MUL => *destination * self.parse_source().unwrap(),
-                TokenValue::DIV => *destination / self.parse_source().unwrap(),
+                TokenValue::AND => *destination & self.parse_source().unwrap(),
+                TokenValue::OR => *destination | self.parse_source().unwrap(),
+                TokenValue::XOR => *destination ^ self.parse_source().unwrap(),
+                _ => std::i32::MAX,
+            };
+
+            if result > 0 {
+                self.sf = false;
+                self.zf = false;
+            } else if result == 0 {
+                self.sf = false;
+                self.zf = true;
+            } else {
+                self.sf = true;
+                self.zf = false;
+            }
+
+            *destination = result;
+        }
+    }
+
+    fn multiplication(&mut self) {
+        self.go_from_here(1);
+
+        if !self.expect_token_type(TokenType::REGISTER, "register".to_string(), false) {
+            return;
+        }
+
+        let destination = self.parse_register().unwrap();
+
+        if !self.expect_token_value(TokenValue::COMMA, ",".to_string(), true) {
+            return;
+        }
+
+        let first_operand = self.parse_destination().unwrap();
+        let second_operand;
+        let result;
+
+        if self.validate_token_value(TokenValue::COMMA, true) {
+            if !self.expect_token_type(TokenType::IMMEDIATE_DATA, "immedidate data".to_string(), false) {
+                return;
+            }
+
+            second_operand = self.text[self.eip].get_int_value();
+            self.go_from_here(1);
+
+            unsafe {
+                result = *first_operand * second_operand;
+                *destination = result;
+            }
+        } else {
+            unsafe {
+                result = *destination * *first_operand;
+                *destination = result;
+            }
+        }
+    }
+
+    fn division(&mut self) {
+        self.go_from_here(1);
+
+        let divisor = self.parse_destination().unwrap();
+
+        let dividend: i64 = ((self.edx << 32) + self.eax).into();
+
+        unsafe {
+            self.eax = (dividend / *divisor as i64) as i32;
+            self.edx = (dividend % *divisor as i64) as i32;
+        }
+    }
+
+    fn unary_operation(&mut self) {
+        let instruction = self.text[self.eip].to_owned();
+        self.go_from_here(1);
+
+        let destination = self.parse_destination().unwrap().to_owned();
+
+
+        unsafe {
+            let result = match instruction.get_token_value() {
+                TokenValue::NOT => !*destination,
+                TokenValue::NEG => -*destination,
                 _ => std::i32::MAX,
             };
 
@@ -441,7 +518,11 @@ impl VM {
                 TokenType::INSTRUCTION => {
                     match self.text[self.eip].get_token_value() {
                         TokenValue::MOV => self.mov(),
-                        TokenValue::ADD | TokenValue::SUB | TokenValue::MUL | TokenValue::DIV => self.arithmetic(),
+                        TokenValue::ADD | TokenValue::SUB | TokenValue::AND |
+                            TokenValue::OR | TokenValue::XOR => self.binary_operation(),
+                        TokenValue::MUL => self.multiplication(),
+                        TokenValue::DIV => self.division(),
+                        TokenValue::NOT | TokenValue::NEG => self.unary_operation(),
                         TokenValue::PUSH => self.push(),
                         TokenValue::POP => self.pop(),
                         TokenValue::CMP => self.cmp(),

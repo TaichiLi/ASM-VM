@@ -33,6 +33,16 @@ pub enum TokenValue {
     MUL,
     /// `div`
     DIV,
+    /// `and`
+    AND,
+    /// `or`
+    OR,
+    /// `xor`
+    XOR,
+    /// `not`
+    NOT,
+    /// `neg`
+    NEG,
     /// `push`
     PUSH,
     /// `pop`
