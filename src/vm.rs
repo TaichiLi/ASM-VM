@@ -163,8 +163,9 @@ impl VM {
                     if current_token.get_token_value() == TokenValue::COLON {
                         self.index.insert(token.get_token_name(), count - 1);
 
-                        if token.get_token_name().eq("main") {
-                            entrance = count - 1;
+                        match token.get_token_name().as_str() {
+                            "main" | "start" | "_main" | "_start" => entrance = count - 1,
+                            _ => {},
                         }
                     }
 
@@ -426,7 +427,7 @@ impl VM {
         }
     }
 
-    /// unary operation, including `not`, `neg`.
+    /// unary operation, including `inc`, `dec`, `not`, `neg`.
     ///
     /// uop &lt;reg32&gt;
     ///
@@ -440,6 +441,8 @@ impl VM {
 
         unsafe {
             let result = match instruction.get_token_value() {
+                TokenValue::INC => *destination + 1,
+                TokenValue::DEC => *destination - 1,
                 TokenValue::NOT => !*destination,
                 TokenValue::NEG => -*destination,
                 _ => std::i32::MAX,
@@ -678,7 +681,7 @@ impl VM {
                             TokenValue::OR | TokenValue::XOR => self.binary_operation(),
                         TokenValue::MUL => self.multiplication(),
                         TokenValue::DIV => self.division(),
-                        TokenValue::NOT | TokenValue::NEG => self.unary_operation(),
+                        TokenValue::INC | TokenValue::DEC | TokenValue::NOT | TokenValue::NEG => self.unary_operation(),
                         TokenValue::SHL | TokenValue::SHR => self.bitshift(),
                         TokenValue::PUSH => self.push(),
                         TokenValue::POP => self.pop(),

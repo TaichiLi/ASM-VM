@@ -308,7 +308,7 @@ impl Scanner {
         let token_type;
         let token_value;
 
-        match self.buffer_.as_str() {
+        match self.buffer_.to_lowercase().as_str() {
             "mov" => {
                 token_type = TokenType::INSTRUCTION;
                 token_value = TokenValue::MOV;
@@ -320,6 +320,14 @@ impl Scanner {
             "sub" => {
                 token_type = TokenType::INSTRUCTION;
                 token_value = TokenValue::SUB;
+            },
+            "inc" => {
+                token_type = TokenType::INSTRUCTION;
+                token_value = TokenValue::INC;
+            },
+            "dec" => {
+                token_type = TokenType::INSTRUCTION;
+                token_value = TokenValue::DEC;
             },
             "mul" => {
                 token_type = TokenType::INSTRUCTION;

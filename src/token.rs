@@ -29,6 +29,10 @@ pub enum TokenValue {
     ADD,
     /// `sub`
     SUB,
+    /// `inc`
+    INC,
+    /// `dec`
+    DEC,
     /// `mul`
     MUL,
     /// `div`
