@@ -2,7 +2,7 @@
 
 #[allow(non_camel_case_types)]
 #[derive(Copy, Clone, PartialEq)]
-/// The type of token
+/// Type of token
 pub enum TokenType {
     /// instruction, such as `mov`
     INSTRUCTION,
@@ -20,7 +20,7 @@ pub enum TokenType {
 
 #[derive(Copy, Clone, PartialEq)]
 #[allow(non_camel_case_types)]
-/// The value of token
+/// Value of token
 pub enum TokenValue {
     /// instruction
     /// `mov`
@@ -43,12 +43,18 @@ pub enum TokenValue {
     NOT,
     /// `neg`
     NEG,
+    /// `shl`
+    SHL,
+    /// `shr`
+    SHR,
     /// `push`
     PUSH,
     /// `pop`
     POP,
     /// `cmp`
     CMP,
+    /// `jmp`
+    JMP,
     /// `je`
     JE,
     /// `jne`
@@ -117,7 +123,7 @@ pub enum TokenValue {
 }
 
 impl TokenType {
-    fn token_type_description(&self) -> String {
+    fn to_string(&self) -> String {
         let buffer = match self {
             TokenType::INSTRUCTION => "instruction",
             TokenType::REGISTER => "register",
@@ -133,7 +139,7 @@ impl TokenType {
 
 #[derive(Default)]
 #[derive(Clone)]
-/// The location of token
+/// Location of token
 pub struct TokenLocation {
     source_file_name_: String,
     line_: i32,
@@ -155,6 +161,7 @@ impl TokenLocation {
 }
 
 #[derive(Clone)]
+/// Lexical token
 pub struct Token {
     type_: TokenType,
     value_: TokenValue,
@@ -216,23 +223,23 @@ impl Token {
     pub fn get_int_value(&self) -> i32 {
         self.int_value_
     }
-    
+
     pub fn set_token_type(&mut self, token_type: TokenType) {
         self.type_ = token_type;
     }
-    
+
     /*
     pub fn get_token_value(&mut self, token_value: TokenValue) {
         self.value_ = token_value;
     }
     */
-    
+
     pub fn set_int_value(&mut self, int_value: i32) {
         self.int_value_ = int_value;
     }
 
     pub fn to_string(&self) -> String {
-        format!("{} Token Type: {}, Token Value: {}", self.location_.to_string(),self.type_.token_type_description(),
+        format!("{} Token Type: {}, Token Value: {}", self.location_.to_string(),self.type_.to_string(),
                 self.name_)
     }
 

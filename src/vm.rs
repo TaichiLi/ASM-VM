@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 use crate::token::*;
 use crate::scanner::*;
 use std::collections::HashMap;
@@ -7,27 +6,47 @@ use std::result::Result;
 
 const MAX: usize = 1024;
 
+/// Visual Machine for x86 assembly
 pub struct VM {
+    /// simulate the `stack`
     stack: [i32; MAX],
+    /// simulate the `memory`
     memory: [i32; MAX],
+    /// simulate the `text`
     text: Vec<Token>,
+    /// label location table, to implement `call` instruction.
     index: HashMap<String, i32>,
+    /// `eax`, accumulator register
     eax: i32,
+    /// `ebx`, base register
     ebx: i32,
+    /// `ecx`, counter register
     ecx: i32,
+    /// `edx`, data register
     edx: i32,
+    /// `esi`, source index register
     esi: i32,
+    /// `edi`, destination index register
     edi: i32,
+    /// `esp`, stack pointer register
     esp: i32,
+    /// `ebp`, base pointer register
     ebp: i32,
+    /// `eip`, instruction pointer register
     eip: usize,
+    /// `zf`, zero flag
     zf: bool,
+    /// `sf`, symbol flag
     sf: bool,
+    /// lexical scanner
     scanner: Scanner,
+    /// error flag
     error_flag_: bool,
 }
 
+#[allow(dead_code)]
 impl VM {
+    /// New VM from a assembly source file.
     pub fn new(source_file_name: String) -> Self {
         VM {
             stack: [0; MAX],
@@ -112,12 +131,20 @@ impl VM {
         true
     }
 
+    /// change `eip`.
+    ///
+    /// eip += displacement;
     fn go_from_here(&mut self, displacement: i32) {
         self.eip = (self.eip as i32 + displacement) as usize;
     }
 
+    /// Preprocess assembly source code.
+    ///
+    /// 1. Read all token from source file, and store into `self.text`.
+    /// 2. Record the location of `label`, and store into `self.index`.
+    /// 3. Replace the the `label` in `call label` instruction with the corresponding displacement.
     fn preprocess(&mut self) {
-        let mut count = 0;
+        let mut count = -1;
         let mut entrance = 0;
 
         loop {
@@ -128,40 +155,58 @@ impl VM {
 
             match token.get_token_type() {
                 TokenType::LABEL => {
-                    self.index.insert(token.get_token_name(), count);
+                    self.scanner.get_next_token();
+                    count = count + 1;
 
-                    if token.get_token_name().eq("main") {
-                        entrance = count - 1;
+                    let current_token = self.scanner.get_token();
+
+                    if current_token.get_token_value() == TokenValue::COLON {
+                        self.index.insert(token.get_token_name(), count - 1);
+
+                        if token.get_token_name().eq("main") {
+                            entrance = count - 1;
+                        }
                     }
 
                     self.text.push(token);
+                    self.text.push(current_token);
                 },
                 TokenType::END_OF_FILE => break,
-                _ => {
-                    self.text.push(token.to_owned());
+                _ => self.text.push(token),
+            }
+        }
 
-                    if token.get_token_value() == TokenValue::CALL {
-                        let mut label = self.scanner.get_next_token();
-                        count = count + 1;
+        let mut flag = false;
+        count = -1;
 
-                        if label.get_token_type() != TokenType::LABEL {
-                                panic!("Expected \"label\", but find \"{}\"", label.get_token_name());
-                        }
+        for token in &mut self.text {
+            count = count + 1;
 
-                        let label_name = label.get_token_name();
+            if !flag {
+                match token.get_token_value() {
+                    TokenValue::CALL | TokenValue::JE | TokenValue::JNE | TokenValue::JG | TokenValue::JGE | TokenValue::JL
+                        | TokenValue::JLE => {
+                            flag = true;
+                    },
+                    _ => {},
+                }
+            } else {
+                if token.get_token_type() != TokenType::LABEL {
+                    panic!("Expected \"label\", but find \"{}\"", token.get_token_name());
+                }
 
-                        if !self.index.contains_key(&label_name) {
-                            panic!("Unknown label: \"{}\"", label_name);
-                        }
+                let label_name = token.get_token_name();
 
-                        let label_address = self.index.get(&label_name).unwrap();
+                if !self.index.contains_key(&label_name) {
+                    panic!("Unknown label: \"{}\"", label_name);
+                }
 
-                        label.set_token_type(TokenType::IMMEDIATE_DATA);
-                        label.set_int_value(label_address - count - 1);
+                let label_address = self.index.get(&label_name).unwrap();
 
-                        self.text.push(label);
-                    }
-                },
+                token.set_token_type(TokenType::IMMEDIATE_DATA);
+                token.set_int_value(label_address - count - 1);
+
+                flag = false;
             }
         }
 
@@ -218,7 +263,7 @@ impl VM {
         } else if self.validate_token_type(TokenType::IMMEDIATE_DATA, true) {
             return Ok(self.text[self.eip - 1].get_int_value());
         } else {
-            self.error_report(&format!("parse_source Unexpected token: {}", self.text[self.eip].get_token_name()));
+            self.error_report(&format!("Unexpected token: {}", self.text[self.eip].get_token_name()));
             return Err("Unexpected token: {}");
         }
     }
@@ -229,11 +274,22 @@ impl VM {
         } else if self.validate_token_type(TokenType::REGISTER, false) {
             return self.parse_register();
         } else {
-            self.error_report(&format!("parse_destination Unexpected token: {}", self.text[self.eip].get_token_name()));
+            self.error_report(&format!("Unexpected token: {}", self.text[self.eip].get_token_name()));
             return Err("Unexpected token: {}");
         }
     }
 
+    /// `mov` instruction
+    ///
+    /// mov &lt;reg&gt;, &lt;reg&gt;
+    ///
+    /// mov &lt;reg&gt;, &lt;mem&gt;
+    ///
+    /// mov &lt;mem&gt;, &lt;reg&gt;
+    ///
+    /// mov &lt;reg&gt;, &lt;const&gt;
+    ///
+    /// mov &lt;mem&gt;, &lt;const&gt;
     fn mov(&mut self) {
         self.go_from_here(1);
 
@@ -250,6 +306,30 @@ impl VM {
         }
     }
 
+    fn set_flag(&mut self, result: i32) {
+        if result > 0 {
+            self.sf = false;
+            self.zf = false;
+        } else if result == 0 {
+            self.sf = false;
+            self.zf = true;
+        } else {
+            self.sf = true;
+            self.zf = false;
+        }
+    }
+
+    /// binary operation, including `add`, `sub`, `and`, `or`, `xor`.
+    ///
+    /// bop &lt;reg&gt;, &lt;reg&gt;
+    ///
+    /// bop &lt;reg&gt;, &lt;mem&gt;
+    ///
+    /// bop &lt;mem&gt;, &lt;reg&gt;
+    ///
+    /// bop &lt;reg&gt;, &lt;con&gt;
+    ///
+    /// bop &lt;mem&gt;, &lt;con&gt;
     fn binary_operation(&mut self) {
         let instruction = self.text[self.eip].to_owned();
         self.go_from_here(1);
@@ -270,21 +350,21 @@ impl VM {
                 _ => std::i32::MAX,
             };
 
-            if result > 0 {
-                self.sf = false;
-                self.zf = false;
-            } else if result == 0 {
-                self.sf = false;
-                self.zf = true;
-            } else {
-                self.sf = true;
-                self.zf = false;
-            }
+            self.set_flag(result);
 
             *destination = result;
         }
     }
 
+    /// `mul` instruction, only support for integer.
+    ///
+    /// mul &lt;reg32&gt;, &lt;reg32&gt;
+    ///
+    /// mul &lt;reg32&gt;, &lt;mem&gt;
+    ///
+    /// mul &lt;reg32&gt;, &lt;reg32&gt;, &lt;con&gt;
+    ///
+    /// mul &lt;reg32&gt;, &lt;mem&gt;, &lt;con &gt;
     fn multiplication(&mut self) {
         self.go_from_here(1);
 
@@ -312,22 +392,33 @@ impl VM {
 
             unsafe {
                 result = *first_operand * second_operand;
+
+                self.set_flag(result);
+
                 *destination = result;
             }
         } else {
             unsafe {
                 result = *destination * *first_operand;
+
+                self.set_flag(result);
+
                 *destination = result;
             }
         }
     }
 
+    /// `div` instruction
+    ///
+    /// div &lt;reg32&gt;
+    ///
+    /// div &lt;mem&gt;
     fn division(&mut self) {
         self.go_from_here(1);
 
         let divisor = self.parse_destination().unwrap();
 
-        let dividend: i64 = ((self.edx << 32) + self.eax).into();
+        let dividend: i64 = (self.edx as i64) << 32 + self.eax as i64;
 
         unsafe {
             self.eax = (dividend / *divisor as i64) as i32;
@@ -335,6 +426,11 @@ impl VM {
         }
     }
 
+    /// unary operation, including `not`, `neg`.
+    ///
+    /// uop &lt;reg32&gt;
+    ///
+    /// uop &lt;mem&gt;
     fn unary_operation(&mut self) {
         let instruction = self.text[self.eip].to_owned();
         self.go_from_here(1);
@@ -349,21 +445,53 @@ impl VM {
                 _ => std::i32::MAX,
             };
 
-            if result > 0 {
-                self.sf = false;
-                self.zf = false;
-            } else if result == 0 {
-                self.sf = false;
-                self.zf = true;
-            } else {
-                self.sf = true;
-                self.zf = false;
-            }
+            self.set_flag(result);
 
             *destination = result;
         }
     }
 
+    fn bitshift(&mut self) {
+        let instruction = self.text[self.eip].to_owned();
+        self.go_from_here(1);
+
+        let destination = self.parse_destination().unwrap();
+
+        if !self.expect_token_value(TokenValue::COMMA, ",".to_string(), true) {
+            return;
+        }
+
+        if !self.expect_token_type(TokenType::IMMEDIATE_DATA, "immediate data".to_string(), false) {
+            return;
+        }
+
+        let operand = self.text[self.eip].get_int_value();
+        self.go_from_here(1);
+
+        if operand > std::u8::MAX as i32 {
+            self.error_report(&"Bitshift operand too big!".to_string());
+        }
+
+        unsafe {
+            let result = match instruction.get_token_value() {
+                TokenValue::SHL => *destination << operand,
+                TokenValue::SHR => *destination >> operand,
+                _ => std::i32::MAX,
+            };
+
+            self.set_flag(result);
+
+            *destination = result;
+        }
+    }
+
+    /// `push` instruction
+    ///
+    /// push &lt;reg32&gt;
+    ///
+    /// push &lt;mem&gt;
+    ///
+    /// push &lt;con32&gt;
     fn push(&mut self) {
         self.go_from_here(1);
 
@@ -372,6 +500,11 @@ impl VM {
         self.esp = self.esp - 1;
     }
 
+    /// `pop` instruction
+    ///
+    /// pop &lt;reg32&gt;
+    ///
+    /// pop &lt;mem&gt;
     fn pop(&mut self) {
         self.go_from_here(1);
 
@@ -384,6 +517,14 @@ impl VM {
         self.esp = self.esp + 1;
     }
 
+    /// `cmp` instruction
+    /// cmp &lt;reg&gt;, &lt;reg&gt;
+    ///
+    /// cmp &lt;reg&gt;, &lt;mem&gt;
+    ///
+    /// cmp &lt;mem&gt;, &lt;reg&gt;
+    ///
+    /// cmp &lt;reg&gt;, &lt;con&gt;
     fn cmp(&mut self) {
         self.go_from_here(1);
 
@@ -423,6 +564,9 @@ impl VM {
 
 
         match instruction.get_token_value() {
+            TokenValue::JMP => {
+                self.go_from_here(displacement);
+            },
             TokenValue::JE => {
                 if self.zf {
                     self.go_from_here(displacement);
@@ -469,6 +613,9 @@ impl VM {
         }
     }
 
+    /// `call` instruction
+    ///
+    /// call &lt;label&gt;
     fn call(&mut self) {
         self.go_from_here(1);
 
@@ -485,6 +632,7 @@ impl VM {
         self.go_from_here(displacement);
     }
 
+    /// `ret` instruction
     fn ret(&mut self) {
         self.eip = self.stack[(self.ebp + self.esp + 1) as usize] as usize;
         self.esp = self.esp + 1;
@@ -510,6 +658,14 @@ impl VM {
         self.text.to_owned()
     }
 
+    /// Run vm.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let vm = VM::new("./test.asm".to_string());
+    /// vm.run();
+    /// ```
     pub fn run(&mut self) {
         self.preprocess();
 
@@ -523,10 +679,11 @@ impl VM {
                         TokenValue::MUL => self.multiplication(),
                         TokenValue::DIV => self.division(),
                         TokenValue::NOT | TokenValue::NEG => self.unary_operation(),
+                        TokenValue::SHL | TokenValue::SHR => self.bitshift(),
                         TokenValue::PUSH => self.push(),
                         TokenValue::POP => self.pop(),
                         TokenValue::CMP => self.cmp(),
-                        TokenValue::JE | TokenValue::JNE | TokenValue::JG | TokenValue::JGE | TokenValue::JL |
+                        TokenValue::JMP | TokenValue::JE | TokenValue::JNE | TokenValue::JG | TokenValue::JGE | TokenValue::JL |
                             TokenValue::JLE => self.jump(),
                         TokenValue::CALL => self.call(),
                         TokenValue::RET => self.ret(),
@@ -539,7 +696,7 @@ impl VM {
                     if !self.expect_token_value(TokenValue::COLON, ":".to_string(), true) {
                     }
                 },
-                _ => self.error_report(&format!("run Unexpected token: {}", self.text[self.eip].get_token_name())),
+                _ => panic!("Unexpected token: {}", self.text[self.eip].get_token_name()),
             }
         }
     }

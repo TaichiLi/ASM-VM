@@ -5,6 +5,7 @@ use std::io::prelude::*;
 use std::io::SeekFrom;
 
 #[allow(non_camel_case_types)]
+/// State of lexical analysis
 enum State {
     NONE,
     END_OF_FILE,
@@ -13,6 +14,7 @@ enum State {
     DELIMITER,
 }
 
+/// Lexical scanner
 pub struct Scanner {
     source_file_name_: String,
     file_: File,
@@ -146,7 +148,7 @@ impl Scanner {
     /// # Examples
     ///
     /// ```
-    /// let scanner = Scanner::new("/test.mjava");
+    /// let scanner = Scanner::new("/test.asm");
     /// let token = scanner.get_token();
     /// ```
     pub fn get_token(&self) -> Token {
@@ -157,7 +159,7 @@ impl Scanner {
     ///
     /// # Examples
     /// ```
-    /// let scanner = Scanner::new("./test.mjava");
+    /// let scanner = Scanner::new("./test.asm");
     /// let token = scanner.get_next_token();
     /// ```
     pub fn get_next_token(&mut self) -> Token {
@@ -188,7 +190,8 @@ impl Scanner {
                     } else {
                         if self.current_char_.is_ascii_alphabetic() {
                             self.state_ = State::IDENTIFIER;
-                        } else if self.current_char_.is_ascii_digit() {
+                        } else if self.current_char_.is_ascii_digit() || self.current_char_ == '+' ||
+                            self.current_char_== '-' {
                             self.state_ = State::IMMEDIATE_DATA;
                         } else {
                             self.state_ = State::DELIMITER;
@@ -290,21 +293,21 @@ impl Scanner {
             self.make_int_token(self.loc_.to_owned(), self.buffer_.to_owned(), int_value);
         }
     }
-    
+
     fn handle_identifier_state(&mut self) {
         self.loc_ = self.get_token_location();
 
         self.add_to_buffer(self.current_char_);
         self.get_next_char();
-        
+
         while self.current_char_.is_ascii_alphabetic() {
             self.add_to_buffer(self.current_char_);
             self.get_next_char();
         }
-        
+
         let token_type;
         let token_value;
-        
+
         match self.buffer_.as_str() {
             "mov" => {
                 token_type = TokenType::INSTRUCTION;
@@ -354,9 +357,21 @@ impl Scanner {
                 token_type = TokenType::INSTRUCTION;
                 token_value = TokenValue::POP;
             },
+            "shl" => {
+                token_type = TokenType::INSTRUCTION;
+                token_value = TokenValue::SHL;
+            },
+            "shr" => {
+                token_type = TokenType::INSTRUCTION;
+                token_value = TokenValue::SHR;
+            },
             "cmp" => {
                 token_type = TokenType::INSTRUCTION;
                 token_value = TokenValue::CMP;
+            },
+            "jmp" => {
+                token_type = TokenType::INSTRUCTION;
+                token_value = TokenValue::JMP;
             },
             "je" => {
                 token_type = TokenType::INSTRUCTION;
@@ -443,7 +458,7 @@ impl Scanner {
                 token_value = TokenValue::LABEL;
             },
         }
-        
+
         self.make_token(token_type, token_value, self.loc_.to_owned(), self.buffer_.to_owned());
     }
 
