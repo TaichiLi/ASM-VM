@@ -11,7 +11,7 @@ enum State {
     END_OF_FILE,
     IDENTIFIER,
     IMMEDIATE_DATA,
-    DELIMITER,
+    SYMBOL,
 }
 
 /// Lexical scanner
@@ -64,6 +64,12 @@ impl Scanner {
 
     fn make_int_token(&mut self, loc: TokenLocation, name: String, int_value: i32) {
         self.token_ = Token::new_int_token(loc, name, int_value);
+        self.buffer_.clear();
+        self.state_ = State::NONE;
+    }
+
+    fn make_symbol_token(&mut self, token_value: TokenValue, loc: TokenLocation, name: String, int_value: i32) {
+        self.token_ = Token::new_symbol_token(token_value, loc, name, int_value);
         self.buffer_.clear();
         self.state_ = State::NONE;
     }
@@ -178,7 +184,7 @@ impl Scanner {
                 State::END_OF_FILE => self.handle_eof_state(),
                 State::IDENTIFIER => self.handle_identifier_state(),
                 State::IMMEDIATE_DATA => self.handle_immedidate_data_state(),
-                State::DELIMITER => self.handle_demiliter_state(),
+                State::SYMBOL => self.handle_symbol_state(),
             }
 
             match self.state_ {
@@ -188,13 +194,12 @@ impl Scanner {
                     if self.eof_flag_ {
                         self.state_ = State::END_OF_FILE;
                     } else {
-                        if self.current_char_.is_ascii_alphabetic() {
+                        if self.current_char_.is_ascii_alphabetic() || self.current_char_ == '_' {
                             self.state_ = State::IDENTIFIER;
-                        } else if self.current_char_.is_ascii_digit() || self.current_char_ == '+' ||
-                            self.current_char_== '-' {
+                        } else if self.current_char_.is_ascii_digit() {
                             self.state_ = State::IMMEDIATE_DATA;
                         } else {
-                            self.state_ = State::DELIMITER;
+                            self.state_ = State::SYMBOL;
                         }
                     }
                 },
@@ -300,7 +305,7 @@ impl Scanner {
         self.add_to_buffer(self.current_char_);
         self.get_next_char();
 
-        while self.current_char_.is_ascii_alphabetic() {
+        while self.current_char_.is_ascii_alphanumeric() || self.current_char_ == '_'{
             self.add_to_buffer(self.current_char_);
             self.get_next_char();
         }
@@ -413,6 +418,14 @@ impl Scanner {
                 token_type = TokenType::INSTRUCTION;
                 token_value = TokenValue::RET;
             },
+            "enter" => {
+                token_type = TokenType::INSTRUCTION;
+                token_value = TokenValue::ENTER;
+            },
+            "leave" => {
+                token_type = TokenType::INSTRUCTION;
+                token_value = TokenValue::LEAVE;
+            },
             "int" => {
                 token_type = TokenType::INSTRUCTION;
                 token_value = TokenValue::INT;
@@ -421,33 +434,97 @@ impl Scanner {
                 token_type = TokenType::REGISTER;
                 token_value = TokenValue::EAX;
             },
+            "ax" => {
+                token_type = TokenType::REGISTER;
+                token_value = TokenValue::AX;
+            },
+            "ah" => {
+                token_type = TokenType::REGISTER;
+                token_value = TokenValue::AH;
+            },
+            "al" => {
+                token_type = TokenType::REGISTER;
+                token_value = TokenValue::AL;
+            },
             "ebx" => {
                 token_type = TokenType::REGISTER;
                 token_value = TokenValue::EBX;
+            },
+            "bx" => {
+                token_type = TokenType::REGISTER;
+                token_value = TokenValue::BX;
+            },
+            "bh" => {
+                token_type = TokenType::REGISTER;
+                token_value = TokenValue::BH;
+            },
+            "bl" => {
+                token_type = TokenType::REGISTER;
+                token_value = TokenValue::BL;
             },
             "ecx" => {
                 token_type = TokenType::REGISTER;
                 token_value = TokenValue::ECX;
             },
+            "cx" => {
+                token_type = TokenType::REGISTER;
+                token_value = TokenValue::CX;
+            },
+            "ch" => {
+                token_type = TokenType::REGISTER;
+                token_value = TokenValue::CH;
+            },
+            "cl" => {
+                token_type = TokenType::REGISTER;
+                token_value = TokenValue::CL;
+            },
             "edx" => {
                 token_type = TokenType::REGISTER;
                 token_value = TokenValue::EDX;
+            },
+            "dx" => {
+                token_type = TokenType::REGISTER;
+                token_value = TokenValue::DX;
+            },
+            "dh" => {
+                token_type = TokenType::REGISTER;
+                token_value = TokenValue::DH;
+            },
+            "dl" => {
+                token_type = TokenType::REGISTER;
+                token_value = TokenValue::DL;
             },
             "esi" => {
                 token_type = TokenType::REGISTER;
                 token_value = TokenValue::ESI;
             },
+            "si" => {
+                token_type = TokenType::REGISTER;
+                token_value = TokenValue::SI;
+            },
             "edi" => {
                 token_type = TokenType::REGISTER;
                 token_value = TokenValue::EDI;
+            },
+            "di" => {
+                token_type = TokenType::REGISTER;
+                token_value = TokenValue::DI;
             },
             "esp" => {
                 token_type = TokenType::REGISTER;
                 token_value = TokenValue::ESP;
             },
+            "sp" => {
+                token_type = TokenType::REGISTER;
+                token_value = TokenValue::SP;
+            },
             "ebp" => {
                 token_type = TokenType::REGISTER;
                 token_value = TokenValue::EBP;
+            },
+            "bp" => {
+                token_type = TokenType::REGISTER;
+                token_value = TokenValue::BP;
             },
             "eip" => {
                 token_type = TokenType::REGISTER;
@@ -461,6 +538,22 @@ impl Scanner {
                 token_type = TokenType::REGISTER;
                 token_value = TokenValue::SF;
             },
+            "ptr" => {
+                token_type = TokenType::KEYWORD;
+                token_value = TokenValue::PTR;
+            },
+            "byte" => {
+                token_type = TokenType::KEYWORD;
+                token_value = TokenValue::BYTE;
+            },
+            "word" => {
+                token_type = TokenType::KEYWORD;
+                token_value = TokenValue::WORD;
+            },
+            "dword" => {
+                token_type = TokenType::KEYWORD;
+                token_value = TokenValue::DWORD;
+            },
             _ => {
                 token_type = TokenType::LABEL;
                 token_value = TokenValue::LABEL;
@@ -470,23 +563,26 @@ impl Scanner {
         self.make_token(token_type, token_value, self.loc_.to_owned(), self.buffer_.to_owned());
     }
 
-    fn handle_demiliter_state(&mut self) {
+    fn handle_symbol_state(&mut self) {
         self.loc_ = self.get_token_location();
 
         self.add_to_buffer(self.current_char_);
 
-        let token_value = match self.buffer_.as_str() {
-            "," => TokenValue::COMMA,
-            "[" => TokenValue::LBRACK,
-            "]" => TokenValue::RBRACK,
-            ":" => TokenValue::COLON,
+        let (token_value, precedence) =  match self.buffer_.as_str() {
+            "+" => (TokenValue::PLUS, 10),
+            "-" => (TokenValue::MINUS, 10),
+            "*" => (TokenValue::TIMES, 20),
+            "," => (TokenValue::COMMA, -1),
+            "[" => (TokenValue::LBRACK, -1),
+            "]" => (TokenValue::RBRACK, -1),
+            ":" => (TokenValue::COLON, -1),
             _ => {
-                self.error_report(&format!("Unknown demiliter: {}", &self.buffer_));
-                TokenValue::UNKNOWN
+                self.error_report(&format!("Unknown symbol: {}", &self.buffer_));
+                (TokenValue::UNKNOWN, -1)
             },
         };
 
-        self.make_token(TokenType::DELIMITER, token_value, self.loc_.to_owned(), self.buffer_.to_owned());
+        self.make_symbol_token(token_value, self.loc_.to_owned(), self.buffer_.to_owned(), precedence);
 
         self.get_next_char();
     }

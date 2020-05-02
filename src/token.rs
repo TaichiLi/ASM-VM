@@ -8,8 +8,10 @@ pub enum TokenType {
     INSTRUCTION,
     /// register, such as `eax`
     REGISTER,
-    /// delimiter, such as `,`
-    DELIMITER,
+    ///keyword, such as `ptr`
+    KEYWORD,
+    /// symbol, such as `+`, `-`, `*`
+    SYMBOL,
     /// immediate date, such as `123
     IMMEDIATE_DATA,
     /// label, such as `main`
@@ -75,26 +77,62 @@ pub enum TokenValue {
     CALL,
     /// `ret`
     RET,
+    /// `enter`
+    ENTER,
+    /// `leave`
+    LEAVE,
     /// `int`
     INT,
 
     /// register
     /// `eax`
     EAX,
+    /// `ax`
+    AX,
+    /// `ah`
+    AH,
+    /// `al`
+    AL,
     /// `ebx`
     EBX,
+    /// `bx`
+    BX,
+    /// `bh`
+    BH,
+    /// `bl`
+    BL,
     /// `ecx`
     ECX,
+    /// `cx`
+    CX,
+    /// `ch`
+    CH,
+    /// `cl`
+    CL,
     /// `edx`
     EDX,
+    /// `dx`
+    DX,
+    /// `dh`
+    DH,
+    /// `dl`
+    DL,
     /// `esi`
     ESI,
+    /// `si`
+    SI,
     /// `edi`
     EDI,
+    /// `di`
+    DI,
     /// `esp`
     ESP,
+    /// `sp`
+    SP,
     /// `ebp`
     EBP,
+    /// `bp`
+    BP,
     /// `eip`
     EIP,
     /// `zf`
@@ -102,7 +140,23 @@ pub enum TokenValue {
     /// `sf`
     SF,
 
-    /// demiliter
+    /// keyword
+    /// `ptr`
+    PTR,
+    /// `byte`
+    BYTE,
+    /// `word`
+    WORD,
+    /// `dword`
+    DWORD,
+
+    /// symbol
+    /// `+`
+    PLUS,
+    /// `-`
+    MINUS,
+    /// `*`
+    TIMES,
     /// `;`
     SEMICOLON,
     /// `,`
@@ -131,7 +185,8 @@ impl TokenType {
         let buffer = match self {
             TokenType::INSTRUCTION => "instruction",
             TokenType::REGISTER => "register",
-            TokenType::DELIMITER => "delimiter",
+            TokenType::KEYWORD => "keyword",
+            TokenType::SYMBOL => "symbol",
             TokenType::IMMEDIATE_DATA => "immediate data",
             TokenType::LABEL => "label",
             TokenType::END_OF_FILE => "eof",
@@ -208,6 +263,17 @@ impl Token {
         }
     }
 
+    pub fn new_symbol_token(token_value: TokenValue, loc: TokenLocation, name: String, int_value: i32) -> Self {
+        Token {
+            type_: TokenType::SYMBOL,
+            value_: token_value,
+            location_: loc,
+            name_: name,
+            int_value_: int_value,
+            ..Default::default()
+        }
+    }
+
     pub fn get_token_location(&self) -> TokenLocation {
         self.location_.to_owned()
     }
@@ -225,6 +291,14 @@ impl Token {
     }
 
     pub fn get_int_value(&self) -> i32 {
+        self.int_value_
+    }
+
+    pub fn get_precedence(&self) -> i32 {
+        if self.type_ != TokenType::SYMBOL {
+            panic!("{} is not a symbol token. Only symbol token have precedence!", self.name_);
+        }
+
         self.int_value_
     }
 
