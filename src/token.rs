@@ -27,6 +27,10 @@ pub enum TokenValue {
     /// instruction
     /// `mov`
     MOV,
+    /// `movzx`
+    MOVZX,
+    /// `movsx`
+    MOVSX,
     /// `add`
     ADD,
     /// `sub`
@@ -37,8 +41,12 @@ pub enum TokenValue {
     DEC,
     /// `mul`
     MUL,
+    /// `imul`
+    IMUL,
     /// `div`
     DIV,
+    /// `idiv`
+    IDIV,
     /// `and`
     AND,
     /// `or`
@@ -53,6 +61,8 @@ pub enum TokenValue {
     SHL,
     /// `shr`
     SHR,
+    /// `sar`
+    SAR,
     /// `push`
     PUSH,
     /// `pop`
@@ -73,6 +83,14 @@ pub enum TokenValue {
     JL,
     /// `jle`
     JLE,
+    /// `ja`
+    JA,
+    /// `jae`
+    JAE,
+    /// `jb`
+    JB,
+    /// `jbe`
+    JBE,
     /// `call`
     CALL,
     /// `ret`
@@ -135,10 +153,6 @@ pub enum TokenValue {
     BP,
     /// `eip`
     EIP,
-    /// `zf`
-    ZF,
-    /// `sf`
-    SF,
 
     /// keyword
     /// `ptr`
@@ -226,17 +240,21 @@ pub struct Token {
     value_: TokenValue,
     location_: TokenLocation,
     name_: String,
-    int_value_: i32,
+    /// value of integer literal
+    int_value_: u32,
+    /// precedence of operators, such as `+`, `-`, `*`
+    symbol_precedence_: i32,
 }
 
 impl Default for Token {
     fn default() -> Self {
         Token {
             type_: TokenType::INSTRUCTION,
-            value_: TokenValue::MOV,
+            value_: TokenValue::INT,
             location_: Default::default(),
-            name_: "mov".to_string(),
+            name_: "int".to_string(),
             int_value_: 0,
+            symbol_precedence_: -1,
         }
     }
 }
@@ -252,7 +270,7 @@ impl Token {
         }
     }
 
-    pub fn new_int_token(loc: TokenLocation, name: String, int_value: i32) -> Self {
+    pub fn new_int_token(loc: TokenLocation, name: String, int_value: u32) -> Self {
         Token {
             type_: TokenType::IMMEDIATE_DATA,
             value_: TokenValue::INTEGER_LITERAL,
@@ -263,13 +281,13 @@ impl Token {
         }
     }
 
-    pub fn new_symbol_token(token_value: TokenValue, loc: TokenLocation, name: String, int_value: i32) -> Self {
+    pub fn new_symbol_token(token_value: TokenValue, loc: TokenLocation, name: String, prcedence: i32) -> Self {
         Token {
             type_: TokenType::SYMBOL,
             value_: token_value,
             location_: loc,
             name_: name,
-            int_value_: int_value,
+            symbol_precedence_: prcedence,
             ..Default::default()
         }
     }
@@ -290,7 +308,11 @@ impl Token {
        self.name_.to_owned()
     }
 
-    pub fn get_int_value(&self) -> i32 {
+    pub fn get_int_value(&self) -> u32 {
+        if self.type_ != TokenType::IMMEDIATE_DATA {
+            panic!("{} is not a immediate data token. Only immediate data token have precedence!", self.name_);
+        }
+
         self.int_value_
     }
 
@@ -299,21 +321,19 @@ impl Token {
             panic!("{} is not a symbol token. Only symbol token have precedence!", self.name_);
         }
 
-        self.int_value_
+        self.symbol_precedence_
     }
 
     pub fn set_token_type(&mut self, token_type: TokenType) {
         self.type_ = token_type;
     }
 
-    /*
-    pub fn get_token_value(&mut self, token_value: TokenValue) {
-        self.value_ = token_value;
-    }
-    */
-
     pub fn set_int_value(&mut self, int_value: i32) {
-        self.int_value_ = int_value;
+        if self.type_ != TokenType::IMMEDIATE_DATA {
+            panic!("{} is not a immediate data token. Only immediate data token have precedence!", self.name_);
+        }
+
+        self.int_value_ = int_value as u32;
     }
 
     pub fn to_string(&self) -> String {

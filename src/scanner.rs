@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 use crate::token::*;
 use std::fs::File;
 use std::io::prelude::*;
@@ -30,6 +29,7 @@ pub struct Scanner {
 }
 
 impl Scanner {
+    /// New scanner from the name of source file.
     pub fn new(source_file_name: String) -> Self {
         let file = match File::open(source_file_name.to_owned()) {
             Err(err) => panic!("When trying to open file {}, because {}, an error occurred.", err.to_string(),
@@ -56,24 +56,28 @@ impl Scanner {
         TokenLocation::new(self.source_file_name_.to_owned(), self.line_, self.column_)
     }
 
+    /// Make a `instruction`, `register` or `label` token and reset scanner.
     fn make_token(&mut self, token_type: TokenType, token_value: TokenValue, loc: TokenLocation, name: String) {
         self.token_ = Token::new_token(token_type, token_value, loc, name);
         self.buffer_.clear();
         self.state_ = State::NONE;
     }
 
-    fn make_int_token(&mut self, loc: TokenLocation, name: String, int_value: i32) {
+    /// Make a `immediate data` token and reset scanner.
+    fn make_int_token(&mut self, loc: TokenLocation, name: String, int_value: u32) {
         self.token_ = Token::new_int_token(loc, name, int_value);
         self.buffer_.clear();
         self.state_ = State::NONE;
     }
 
+    /// Make a `symbol` token and reset scanner.
     fn make_symbol_token(&mut self, token_value: TokenValue, loc: TokenLocation, name: String, int_value: i32) {
         self.token_ = Token::new_symbol_token(token_value, loc, name, int_value);
         self.buffer_.clear();
         self.state_ = State::NONE;
     }
 
+    /// Get one char from source file and advance the sequence.
     fn get_next_char(&mut self) {
         let mut buffer = [0; 1];
         match self.file_.read_exact(&mut buffer) {
@@ -92,6 +96,7 @@ impl Scanner {
         }
     }
 
+    /// Get one char from source file without advancing the sequence.
     fn get_peek_char(&mut self) -> char {
         let mut buffer = [0; 1];
         match self.file_.read_exact(&mut buffer) {
@@ -102,12 +107,9 @@ impl Scanner {
         buffer[0].into()
     }
 
+    /// Add current char to buffer.
     fn add_to_buffer(&mut self, ch: char) {
         self.buffer_.push(ch);
-    }
-
-    fn reduce_buffer(&mut self) {
-        self.buffer_.pop();
     }
 
     fn error_token(&mut self, msg: &String) {
@@ -284,13 +286,13 @@ impl Scanner {
         }
 
         if !self.error_flag_ {
-            let int_value: i32 = match i32::from_str_radix(&self.buffer_.clone(), number_base) {
+            let int_value: u32 = match u32::from_str_radix(&self.buffer_.clone(), number_base) {
                 Err(err) => {
                     self.error_report(&format!("When parse integer literal \"{}\", because {}, an error occurred.", self.buffer_,
                             err.to_string()));
                     self.buffer_.clear();
                     self.state_ = State::NONE;
-                    std::i32::MAX
+                    std::u32::MAX
                 },
                 Ok(int_value) => int_value,
             };
@@ -299,6 +301,7 @@ impl Scanner {
         }
     }
 
+    /// handle `instruction`, `register` and `label`.
     fn handle_identifier_state(&mut self) {
         self.loc_ = self.get_token_location();
 
@@ -317,6 +320,14 @@ impl Scanner {
             "mov" => {
                 token_type = TokenType::INSTRUCTION;
                 token_value = TokenValue::MOV;
+            },
+            "movzx" => {
+                token_type = TokenType::INSTRUCTION;
+                token_value = TokenValue::MOVZX;
+            },
+            "movsx" => {
+                token_type = TokenType::INSTRUCTION;
+                token_value = TokenValue::MOVSX;
             },
             "add" => {
                 token_type = TokenType::INSTRUCTION;
@@ -338,9 +349,17 @@ impl Scanner {
                 token_type = TokenType::INSTRUCTION;
                 token_value = TokenValue::MUL;
             },
+            "imul" => {
+                token_type = TokenType::INSTRUCTION;
+                token_value = TokenValue::IMUL;
+            },
             "div" => {
                 token_type = TokenType::INSTRUCTION;
                 token_value = TokenValue::DIV;
+            },
+            "idiv" => {
+                token_type = TokenType::INSTRUCTION;
+                token_value = TokenValue::IDIV;
             },
             "and" => {
                 token_type = TokenType::INSTRUCTION;
@@ -370,13 +389,17 @@ impl Scanner {
                 token_type = TokenType::INSTRUCTION;
                 token_value = TokenValue::POP;
             },
-            "shl" => {
+            "shl"| "sal" => {
                 token_type = TokenType::INSTRUCTION;
                 token_value = TokenValue::SHL;
             },
             "shr" => {
                 token_type = TokenType::INSTRUCTION;
                 token_value = TokenValue::SHR;
+            },
+            "sar" => {
+                token_type = TokenType::INSTRUCTION;
+                token_value = TokenValue::SAR;
             },
             "cmp" => {
                 token_type = TokenType::INSTRUCTION;
@@ -386,29 +409,45 @@ impl Scanner {
                 token_type = TokenType::INSTRUCTION;
                 token_value = TokenValue::JMP;
             },
-            "je" => {
+            "je" | "jz" => {
                 token_type = TokenType::INSTRUCTION;
                 token_value = TokenValue::JE;
             },
-            "jne" => {
+            "jne" | "jnz" => {
                 token_type = TokenType::INSTRUCTION;
                 token_value = TokenValue::JNE;
             },
-            "jg" => {
+            "jg" | "jnle" => {
                 token_type = TokenType::INSTRUCTION;
                 token_value = TokenValue::JG;
             },
-            "jge" => {
+            "jge" | "jnl" => {
                 token_type = TokenType::INSTRUCTION;
                 token_value = TokenValue::JGE;
             },
-            "jl" => {
+            "jl" | "jnge" => {
                 token_type = TokenType::INSTRUCTION;
                 token_value = TokenValue::JL;
             },
-            "jle" => {
+            "jle" | "jng" => {
                 token_type = TokenType::INSTRUCTION;
                 token_value = TokenValue::JLE;
+            },
+            "ja" | "jnbe" => {
+                token_type = TokenType::INSTRUCTION;
+                token_value = TokenValue::JA;
+            },
+            "jae" | "jnb" => {
+                token_type = TokenType::INSTRUCTION;
+                token_value = TokenValue::JAE;
+            },
+            "jb" | "jnae" => {
+                token_type = TokenType::INSTRUCTION;
+                token_value = TokenValue::JB;
+            },
+            "jbe" | "jna" => {
+                token_type = TokenType::INSTRUCTION;
+                token_value = TokenValue::JBE;
             },
             "call" => {
                 token_type = TokenType::INSTRUCTION;
@@ -529,14 +568,6 @@ impl Scanner {
             "eip" => {
                 token_type = TokenType::REGISTER;
                 token_value = TokenValue::EIP;
-            },
-            "zf" => {
-                token_type = TokenType::REGISTER;
-                token_value = TokenValue::ZF;
-            },
-            "sf" => {
-                token_type = TokenType::REGISTER;
-                token_value = TokenValue::SF;
             },
             "ptr" => {
                 token_type = TokenType::KEYWORD;

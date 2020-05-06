@@ -5,44 +5,50 @@ use std::vec::Vec;
 use std::result::Result;
 use std::convert::TryInto;
 
-const MAX: usize = 1024;
+const MAX: usize = 1024 * 1024;
 // const BYTE: u32= 0b1111_1111_1111_1111_1111_1111_0000_0000;
 // const WORD: u32 = 0b1111_1111_1111_1111_0000_0000_0000_0000;
 
 /// Visual Machine for x86 assembly
 pub struct VM {
     /// simulate the `stack`
-    stack: [i32; MAX],
+    stack: [u8; MAX],
     /// simulate the `memory`
-    memory: [i32; MAX],
+    memory: [u8; MAX],
     /// simulate the `text`
     text: Vec<Token>,
     /// label location table, to implement `call` instruction.
     index: HashMap<String, i32>,
     /// `eax`, accumulator register
-    eax: i32,
+    eax: [u8; 4],
     /// `ebx`, base register
-    ebx: i32,
+    ebx: [u8; 4],
     /// `ecx`, counter register
-    ecx: i32,
+    ecx: [u8; 4],
     /// `edx`, data register
-    edx: i32,
+    edx: [u8; 4],
     /// `esi`, source index register
-    esi: i32,
+    esi: [u8; 4],
     /// `edi`, destination index register
-    edi: i32,
+    edi: [u8; 4],
     /// `esp`, stack pointer register
-    esp: i32,
+    esp: [u8; 4],
     /// `ebp`, base pointer register
-    ebp: i32,
+    ebp: [u8; 4],
     /// `eip`, instruction pointer register
-    eip: usize,
+    eip: [u8; 4],
+    /// `cf`, carry flag
+    cf: bool,
     /// `zf`, zero flag
     zf: bool,
-    /// `sf`, symbol flag
+    /// `sf`, sign flag
     sf: bool,
+    /// `of`, overflow flag
+    of: bool,
     /// lexical scanner
     scanner: Scanner,
+    /// call stack depth
+    depth: u8,
     /// error flag
     error_flag_: bool,
 }
@@ -56,18 +62,21 @@ impl VM {
             memory: [0; MAX],
             text: Vec::new(),
             index: HashMap::new(),
-            eax: 0,
-            ebx: 0,
-            ecx: 0,
-            edx: 0,
-            esi: 0,
-            edi: 0,
-            esp: (MAX - 1) as i32,
-            ebp: (MAX - 1) as i32,
-            eip: 0,
+            eax: [0; 4],
+            ebx: [0; 4],
+            ecx: [0; 4],
+            edx: [0; 4],
+            esi: [0; 4],
+            edi: [0; 4],
+            esp: ((MAX - 1) as u32).to_le_bytes(),
+            ebp: ((MAX - 1) as u32).to_le_bytes(),
+            eip: [0; 4],
+            cf: false,
             zf: false,
             sf: false,
+            of: false,
             scanner: Scanner::new(source_file_name),
+            depth: 1,
             error_flag_: false,
         }
     }
@@ -78,14 +87,14 @@ impl VM {
     }
 
     fn error_report(&mut self, msg: &String) {
-        self.error_syntax(&format!("Syntax Error: {}{}", self.text[self.eip].get_token_location().to_string(),
+        self.error_syntax(&format!("Syntax Error: {} {}", self.text[self.get_eip()].get_token_location().to_string(),
                     msg));
     }
 
     fn expect_token_type(&mut self, token_type: TokenType, token_name: String, advance_to_next_token: bool) -> bool {
-        if self.text[self.eip].get_token_type() != token_type {
+        if self.text[self.get_eip()].get_token_type() != token_type {
             self.error_report(&format!("Expected \"{}\", but find \"{}\"", token_name,
-                        self.text[self.eip].get_token_name()));
+                        self.text[self.get_eip()].get_token_name()));
             return false;
         }
 
@@ -97,9 +106,9 @@ impl VM {
     }
 
     fn expect_token_value(&mut self, token_value: TokenValue, token_name: String, advance_to_next_token: bool) -> bool {
-        if self.text[self.eip].get_token_value() != token_value {
+        if self.text[self.get_eip()].get_token_value() != token_value {
             self.error_report(&format!("Expected \"{}\", but find \"{}\"", token_name,
-                        self.text[self.eip].get_token_name()));
+                        self.text[self.get_eip()].get_token_name()));
             return false;
         }
 
@@ -111,7 +120,7 @@ impl VM {
     }
 
     fn validate_token_type(&mut self, token_type: TokenType, advance_to_next_token: bool) -> bool {
-        if self.text[self.eip].get_token_type() != token_type {
+        if self.text[self.get_eip()].get_token_type() != token_type {
             return false;
         }
 
@@ -123,7 +132,7 @@ impl VM {
     }
 
     fn validate_token_value(&mut self, token_value: TokenValue, advance_to_next_token: bool) -> bool {
-        if self.text[self.eip].get_token_value() != token_value {
+        if self.text[self.get_eip()].get_token_value() != token_value {
             return false;
         }
 
@@ -134,11 +143,20 @@ impl VM {
         true
     }
 
+    fn get_eip(&self) -> usize {
+        u32::from_le_bytes(self.eip) as usize
+    }
+
     /// change `eip`.
     ///
     /// eip += displacement;
     fn go_from_here(&mut self, displacement: i32) {
-        self.eip = (self.eip as i32 + displacement) as usize;
+        let value: u32 = match (self.get_eip() as i32 + displacement).try_into() {
+            Ok(value) => value,
+            Err(err) => panic!("Invaild memory address: {}", err),
+        };
+
+        self.eip = value.to_le_bytes();
     }
 
     /// Preprocess assembly source code.
@@ -160,7 +178,8 @@ impl VM {
 
             if token.get_token_value() == TokenValue::COLON {
                 if last_token.get_token_type() != TokenType::LABEL {
-                    panic!("Missing \"label\"");
+                    panic!("Syntax Error: {} Expected \"label\", but find \"{}\"",
+                            token.get_token_location().to_string(), token.get_token_name());
                 }
 
                 self.index.insert(last_token.get_token_name(), count - 1);
@@ -185,22 +204,22 @@ impl VM {
 
             if !flag {
                 match token.get_token_value() {
-                    TokenValue::CALL | TokenValue::JMP | TokenValue::JE | TokenValue::JNE | TokenValue::JG | TokenValue::JGE | TokenValue::JL
-                        | TokenValue::JLE => {
+                    TokenValue::CALL | TokenValue::JMP | TokenValue::JE | TokenValue::JNE | TokenValue::JG | TokenValue::JGE |
+                        TokenValue::JL | TokenValue::JLE => {
                             flag = true;
                     },
                     _ => {},
                 }
             } else {
                 if token.get_token_type() != TokenType::LABEL {
-                    panic!("Expected \"label\", but find \"{}\"", token.get_token_name());
+                    panic!("Syntax Error: {} Expected \"label\", but find \"{}\"",
+                            token.get_token_location().to_string(), token.get_token_name());
                 }
 
                 let label_name = token.get_token_name();
 
                 if !self.index.contains_key(&label_name) {
-                    println!("index: {:?}", self.index);
-                    panic!("Unknown label: \"{}\"", label_name);
+                    panic!("Syntax Error: {} Unknown label: \"{}\"", token.get_token_location().to_string(), label_name);
                 }
 
                 let label_address = self.index.get(&label_name).unwrap();
@@ -212,123 +231,129 @@ impl VM {
             }
         }
 
-        self.eip = entrance as usize;
+        self.eip = (entrance as u32).to_le_bytes();
     }
 
-    fn parse_register(&mut self) -> Result<(*mut i32, u8, u8), String> {
+    fn parse_register(&mut self) -> Result<(*mut [u8], usize, usize), String> {
         self.go_from_here(1);
 
-        match self.text[self.eip - 1].get_token_value() {
-            TokenValue::EAX => return Ok((&mut self.eax as *mut i32, 0, 32)),
-            TokenValue::AX => return Ok((&mut self.eax as *mut i32, 0, 16)),
-            TokenValue::AH => return Ok((&mut self.eax as *mut i32, 8, 8)),
-            TokenValue::AL => return Ok((&mut self.eax as *mut i32, 0, 8)),
-            TokenValue::EBX => return Ok((&mut self.ebx as *mut i32, 0, 32)),
-            TokenValue::BX => return Ok((&mut self.ebx as *mut i32, 0, 16)),
-            TokenValue::BH => return Ok((&mut self.ebx as *mut i32, 8, 8)),
-            TokenValue::BL => return Ok((&mut self.ebx as *mut i32, 0, 8)),
-            TokenValue::ECX => return Ok((&mut self.ecx as *mut i32, 0, 32)),
-            TokenValue::CX => return Ok((&mut self.ecx as *mut i32, 0, 16)),
-            TokenValue::CH => return Ok((&mut self.ecx as *mut i32, 8, 8)),
-            TokenValue::CL => return Ok((&mut self.ecx as *mut i32, 0, 8)),
-            TokenValue::EDX => return Ok((&mut self.edx as *mut i32, 0, 32)),
-            TokenValue::DX => return Ok((&mut self.edx as *mut i32, 0, 16)),
-            TokenValue::DH => return Ok((&mut self.edx as *mut i32, 8, 8)),
-            TokenValue::DL => return Ok((&mut self.edx as *mut i32, 0, 8)),
-            TokenValue::ESI => return Ok((&mut self.esi as *mut i32, 0, 32)),
-            TokenValue::SI => return Ok((&mut self.esi as *mut i32, 0, 16)),
-            TokenValue::EDI => return Ok((&mut self.edi as *mut i32, 0, 32)),
-            TokenValue::DI => return Ok((&mut self.edi as *mut i32, 0, 16)),
-            TokenValue::ESP => return Ok((&mut self.esp as *mut i32, 0, 32)),
-            TokenValue::SP => return Ok((&mut self.esp as *mut i32, 0, 16)),
-            TokenValue::EBP => return Ok((&mut self.ebp as *mut i32, 0, 32)),
-            TokenValue::BP => return Ok((&mut self.ebp as *mut i32, 0, 16)),
+        match self.text[self.get_eip() - 1].get_token_value() {
+            TokenValue::EAX => return Ok((&mut self.eax as *mut [u8], 0, 4)),
+            TokenValue::AX => return Ok((&mut self.eax as *mut [u8], 0, 2)),
+            TokenValue::AH => return Ok((&mut self.eax as *mut [u8], 1, 1)),
+            TokenValue::AL => return Ok((&mut self.eax as *mut [u8], 0, 1)),
+            TokenValue::EBX => return Ok((&mut self.ebx as *mut [u8], 0, 4)),
+            TokenValue::BX => return Ok((&mut self.ebx as *mut [u8], 0, 2)),
+            TokenValue::BH => return Ok((&mut self.ebx as *mut [u8], 1, 1)),
+            TokenValue::BL => return Ok((&mut self.ebx as *mut [u8], 0, 1)),
+            TokenValue::ECX => return Ok((&mut self.ecx as *mut [u8], 0, 4)),
+            TokenValue::CX => return Ok((&mut self.ecx as *mut [u8], 0, 2)),
+            TokenValue::CH => return Ok((&mut self.ecx as *mut [u8], 1, 1)),
+            TokenValue::CL => return Ok((&mut self.ecx as *mut [u8], 0, 1)),
+            TokenValue::EDX => return Ok((&mut self.edx as *mut [u8], 0, 4)),
+            TokenValue::DX => return Ok((&mut self.edx as *mut [u8], 0, 2)),
+            TokenValue::DH => return Ok((&mut self.edx as *mut [u8], 1, 1)),
+            TokenValue::DL => return Ok((&mut self.edx as *mut [u8], 0, 1)),
+            TokenValue::ESI => return Ok((&mut self.esi as *mut [u8], 0, 4)),
+            TokenValue::SI => return Ok((&mut self.esi as *mut [u8], 0, 2)),
+            TokenValue::EDI => return Ok((&mut self.edi as *mut [u8], 0, 4)),
+            TokenValue::DI => return Ok((&mut self.edi as *mut [u8], 0, 2)),
+            TokenValue::ESP => return Ok((&mut self.esp as *mut [u8], 0, 4)),
+            TokenValue::SP => return Ok((&mut self.esp as *mut [u8], 0, 2)),
+            TokenValue::EBP => return Ok((&mut self.ebp as *mut [u8], 0, 4)),
+            TokenValue::BP => return Ok((&mut self.ebp as *mut [u8], 0, 2)),
             _ => return Err("Flag registers can not be used as source!".to_string()),
         }
     }
 
-    fn get_value((pointer, start, size): (*mut i32, u8, u8)) -> i32 {
+    fn get_value((pointer, start, size): (*mut [u8], usize, usize)) -> u32 {
+        let mut value = [0; 4];
+
         unsafe {
-            let tmp = *pointer;
-            tmp.overflowing_shl((32 - start - size).into()).0.overflowing_shr((32 - size).into()).0
+            let (left, _right) = value.split_at_mut(size);
+            left.copy_from_slice(&(*pointer)[start..start + size]);
+        }
+
+        u32::from_le_bytes(value)
+    }
+
+    fn set_value(&self, (pointer, start, size): (*mut [u8], usize, usize), value: u32) {
+        unsafe {
+            let (_left, right) = (*pointer).split_at_mut(start);
+            let (left, _right) = right.split_at_mut(size);
+            left.copy_from_slice(&value.to_le_bytes()[0..size]);
         }
     }
 
-    fn set_value(&self, (pointer, start, size): (*mut i32, u8, u8), value: i32) {
-        unsafe {
-            let result = match size {
-                8 => {
-                //0b1111_1111_1111_1111_1111_1111_0000_0000
-                    let mut tmp = *pointer;
-                    tmp = (tmp.overflowing_shr(start.into()).0 | (tmp.overflowing_shl((32 - start).into()).0)) & !0b0000_0000_0000_0000_0000_0000_1111_1111;
-                    (tmp | (value & 0b0000_0000_0000_0000_0000_0000_1111_1111)).overflowing_shl(start.into()).0
-                },
-                16 => {
-                //0b1111_1111_1111_1111_0000_0000_0000_0000
-                    let mut tmp = *pointer;
-                    tmp = ((tmp.overflowing_shr(start.into()).0) | (tmp.overflowing_shl((32 - start).into()).0)) & !0b0000_0000_0000_0000_1111_1111_1111_1111;
-                    (tmp | (value & 0b0000_0000_0000_0000_1111_1111_1111_1111)).overflowing_shl(start.into()).0
-                },
-                32 => value,
-                _ => std::i32::MAX,
-            };
-
-            *pointer = result;
-        }
-    }
-
-    fn parse_immediate_data(&mut self) -> i32 {
+    fn parse_immediate_data(&mut self) -> (*mut [u8], usize, usize) {
         let sign = self.validate_token_value(TokenValue::MINUS, true);
 
-        if !self.expect_token_type(TokenType::IMMEDIATE_DATA, "immedidate date".to_string(), false) {
-            panic!("{} Missing immediate data! {}", self.text[self.eip].get_token_location().to_string(), self.text[self.eip].get_token_name());
-        }
-
-        let mut value = self.text[self.eip].get_int_value();
+        let mut value: i64 = self.text[self.get_eip()].get_int_value().try_into().unwrap();
         self.go_from_here(1);
 
         if sign {
             value = -value;
         }
 
-        value
+        let size;
+
+        if value >=0 {
+            if value <= std::u8::MAX as i64 {
+                size = 1;
+            } else if value <= std::u16::MAX as i64 {
+                size = 2;
+            } else if value <= std::u32::MAX as i64 {
+                size = 4;
+            } else {
+                panic!("Syntax Error: {} Integer literal: \"{}\" is too big!", self.text[self.get_eip() -
+                        1].get_token_location().to_string(), self.text[self.get_eip() - 1].get_token_name());
+            }
+        } else {
+            if value >= std::i8::MIN as i64 {
+                size = 1;
+            } else if value >= std::i16::MIN as i64 {
+                size = 2;
+            } else if value >= std::i32::MIN as i64 {
+                size = 4;
+            } else {
+                panic!("Syntax Error: {} Integer literal: \"{}\" is too small!", self.text[self.get_eip() -
+                        1].get_token_location().to_string(), self.text[self.get_eip() - 1].get_token_name());
+            }
+        }
+
+        let pointer = Box::into_raw(Box::new((value as u32).to_le_bytes()));
+
+        (pointer, 0, size)
     }
 
-    fn parse_binary_operation(&mut self, lhs: i32, precedence: i32) -> i32 {
+    fn parse_binary_operation(&mut self, lhs: u32, precedence: i32) -> u32 {
         let mut result = lhs;
 
         loop {
-            let current_precedence = self.text[self.eip].get_precedence();
+            let current_precedence = self.text[self.get_eip()].get_precedence();
 
             if current_precedence < precedence {
                 return result;
             }
 
-            let operation = self.text[self.eip].get_token_value();
+            let operation = self.text[self.get_eip()].get_token_value();
             self.go_from_here(1);
 
-            let mut rhs = match self.text[self.eip].get_token_type() {
+            let mut rhs = match self.text[self.get_eip()].get_token_type() {
                 TokenType::REGISTER => {
-                    let operand = self.parse_register().unwrap();
-                    VM::get_value(operand)
+                    VM::get_value(self.parse_register().unwrap())
                 },
                 TokenType::IMMEDIATE_DATA => {
-                    self.parse_immediate_data()
+                    self.go_from_here(1);
+                    self.text[self.get_eip() - 1].get_int_value()
                 },
                 _ => {
-                    let value;
-                    if self.text[self.eip].get_token_value() == TokenValue::MINUS {
-                        value = self.parse_immediate_data();
-                    } else {
-                        self.error_report(&format!("Unexpected token: {}", self.text[self.eip].get_token_name()));
-                        value = std::i32::MAX;
-                    }
-
-                    value
+                    self.error_report(&format!("Unexpected token: {}", self.text[self.get_eip()].get_token_name()));
+                    std::u32::MAX
                 },
             };
 
-            let next_precedence = self.text[self.eip].get_precedence();
+            let next_precedence = self.text[self.get_eip()].get_precedence();
 
             if current_precedence < next_precedence {
                 rhs = self.parse_binary_operation(rhs, current_precedence + 1);
@@ -338,41 +363,42 @@ impl VM {
                 TokenValue::PLUS => lhs + rhs,
                 TokenValue::MINUS => lhs - rhs,
                 TokenValue::TIMES => lhs * rhs,
-                _ => std::i32::MAX,
+                _ => std::u32::MAX,
             };
         }
     }
 
-    fn parse_address(&mut self) -> i32 {
-        let lhs = match self.text[self.eip].get_token_type() {
+    fn parse_address(&mut self) -> usize {
+        let lhs = match self.text[self.get_eip()].get_token_type() {
             TokenType::REGISTER => {
-                    let operand = self.parse_register().unwrap();
-                    VM::get_value(operand)
+                    VM::get_value(self.parse_register().unwrap())
             },
             TokenType::IMMEDIATE_DATA => {
-                self.parse_immediate_data()
+                self.go_from_here(1);
+                self.text[self.get_eip() - 1].get_int_value()
             },
             _ => {
                 let value;
-                if self.text[self.eip].get_token_value() == TokenValue::MINUS {
-                    value = self.parse_immediate_data();
+                if self.text[self.get_eip()].get_token_value() == TokenValue::MINUS {
+                    self.go_from_here(2);
+                    value = self.text[self.get_eip() - 1].get_int_value().overflowing_neg().0;
                 } else {
-                    self.error_report(&format!("Unexpected token: {}", self.text[self.eip].get_token_name()));
-                    value = std::i32::MAX;
+                    self.error_report(&format!("Unexpected token: {}", self.text[self.get_eip()].get_token_name()));
+                    value = std::u32::MAX;
                 }
 
                 value
             },
         };
 
-        self.parse_binary_operation(lhs, 0)
+        self.parse_binary_operation(lhs, 0) as usize
     }
 
-    fn parse_memory(&mut self) -> Result<(*mut i32, u8, u8), String> {
-        let size = match self.text[self.eip].get_token_value() {
-            TokenValue::BYTE => 8,
-            TokenValue::WORD => 16,
-            TokenValue::DWORD => 32,
+    fn parse_memory(&mut self) -> Result<(*mut [u8], usize, usize), String> {
+        let size = match self.text[self.get_eip()].get_token_value() {
+            TokenValue::BYTE => 1,
+            TokenValue::WORD => 2,
+            TokenValue::DWORD => 4,
             _ => 0,
         };
 
@@ -395,35 +421,31 @@ impl VM {
             return Err("Missing right brack ']' !".to_string());
         }
 
-        return Ok((&mut self.memory[mem_add] as *mut i32, 0, size));
+        return Ok((&mut self.memory as *mut [u8], mem_add, size));
     }
 
-    fn parse_source(&mut self) -> Result<i32, String> {
-        match self.text[self.eip].get_token_value() {
+    fn parse_source(&mut self) -> Result<(*mut [u8], usize, usize), String> {
+        match self.text[self.get_eip()].get_token_value() {
             TokenValue::BYTE | TokenValue::WORD | TokenValue::DWORD => {
-                match self.parse_memory() {
-                    Ok(source) => return Ok(VM::get_value(source)),
-                    Err(err) => return Err(err),
-                }
+                return self.parse_memory();
             },
             _ => {},
         }
 
         if self.validate_token_type(TokenType::REGISTER, false) {
-            match self.parse_register() {
-                Ok(source) => return Ok(VM::get_value(source)),
-                Err(err) => return Err(err),
-            }
-        } else if self.validate_token_type(TokenType::IMMEDIATE_DATA, false) || self.validate_token_value(TokenValue::MINUS, false) {
+            return self.parse_register();
+        } else if self.validate_token_type(TokenType::IMMEDIATE_DATA, false) ||
+            self.validate_token_value(TokenValue::MINUS, false) {
             return Ok(self.parse_immediate_data());
         } else {
-            self.error_report(&format!("Unexpected token: {}", self.text[self.eip].get_token_name()));
-            return Err(format!("{}: Unexpected token: {}", self.text[self.eip].get_token_location().to_string(), self.text[self.eip].get_token_name()));
+            self.error_report(&format!("Unexpected token: {}", self.text[self.get_eip()].get_token_name()));
+            return Err(format!("{}: Unexpected token: {}", self.text[self.get_eip()].get_token_location().to_string(),
+                        self.text[self.get_eip()].get_token_name()));
         }
     }
 
-    fn parse_destination(&mut self) -> Result<(*mut i32, u8, u8), String> {
-        match self.text[self.eip].get_token_value() {
+    fn parse_destination(&mut self) -> Result<(*mut [u8], usize, usize), String> {
+        match self.text[self.get_eip()].get_token_value() {
             TokenValue::BYTE | TokenValue::WORD | TokenValue::DWORD => {
                 return self.parse_memory();
             },
@@ -433,8 +455,9 @@ impl VM {
         if self.validate_token_type(TokenType::REGISTER, false) {
             return self.parse_register();
         } else {
-            self.error_report(&format!("Unexpected token: {}", self.text[self.eip].get_token_name()));
-            return Err(format!("{}: Unexpected token: {}", self.text[self.eip].get_token_location().to_string(), self.text[self.eip].get_token_name()));
+            self.error_report(&format!("Unexpected token: {}", self.text[self.get_eip()].get_token_name()));
+            return Err(format!("{}: Unexpected token: {}", self.text[self.get_eip()].get_token_location().to_string(),
+                        self.text[self.get_eip()].get_token_name()));
         }
     }
 
@@ -458,21 +481,170 @@ impl VM {
             return;
         }
 
-        let result = self.parse_source().unwrap();
+        let value;
+        if self.validate_token_type(TokenType::IMMEDIATE_DATA, false) || self.validate_token_value(TokenValue::MINUS,
+                false) {
+            let data = self.parse_immediate_data();
 
-/*
-        if destination[2] != source[2] {
-            panic!("Two operands must have same length!");
+            if destination.2 < data.2 {
+                panic!("Syntax Error: {} The destination is {} bytes, but source is {} bytes", self.text[self.get_eip() -
+                        1].get_token_location().to_string(), destination.2, data.2);
+            }
+
+            let mut bytes = [0; 4];
+            unsafe { bytes.copy_from_slice(&(*data.0)[0..4]); }
+            value = u32::from_le_bytes(bytes);
+        } else {
+            let source = self.parse_source().unwrap();
+
+            if destination.2 != source.2 {
+                panic!("Syntax Error: {} The destination is {} bytes, but source is {} bytes", self.text[self.get_eip() -
+                        1].get_token_location().to_string(), destination.2, source.2);
+            }
+
+            value = VM::get_value(source);
         }
-*/
-        self.set_value(destination, result);
+
+        self.set_value(destination, value);
     }
 
-    fn set_flag(&mut self, result: i32) {
-        if result > 0 {
+    /// `movsx` instruction
+    ///
+    /// movsx &lt;reg16&gt;, &lt;reg8&gt;
+    ///
+    /// movsx &lt;reg16&gt;, &lt;mem8&gt;
+    ///
+    /// movsx &lt;reg32&gt;, &lt;reg8&gt;
+    ///
+    /// movsx &lt;reg32&gt;, &lt;mem8&gt;
+    ///
+    /// movsx &lt;reg32&gt;, &lt;reg16&gt;
+    ///
+    /// movsx &lt;reg32&gt;, &lt;mem16&gt;
+    fn movsx(&mut self) {
+        self.go_from_here(1);
+
+        if !self.expect_token_type(TokenType::REGISTER, "register".to_string(), false) {
+            return;
+        }
+
+        let destination = self.parse_register().unwrap();
+
+        if !self.expect_token_value(TokenValue::COMMA, ",".to_string(), true) {
+            return;
+        }
+
+        if !self.validate_token_type(TokenType::REGISTER, false) && !self.validate_token_value(TokenValue::BYTE, false)
+            && !self.validate_token_value(TokenValue::WORD, false) && !self.validate_token_value(TokenValue::DWORD,
+                    false) {
+            return;
+        }
+
+        let source = self.parse_source().unwrap();
+
+        if destination.2 <= source.2 {
+            panic!("Syntax Error: {} The destination is {} bytes, but source is {} bytes", self.text[self.get_eip() -
+                    1].get_token_location().to_string(), destination.2, source.2);
+        }
+
+        let mut bytes;
+        unsafe {
+            if (*source.0)[source.1 + source.2 - 1] >= 128 {
+                bytes = [0xff; 4];
+            } else {
+                bytes = [0x00; 4];
+            }
+
+            let (left, _right) = bytes.split_at_mut(source.2);
+            left.copy_from_slice(&(*source.0)[source.1..source.1 + source.2]);
+        }
+
+        self.set_value(destination, u32::from_le_bytes(bytes));
+    }
+
+    /// `movzx` instruction
+    ///
+    /// movzx &lt;reg16&gt;, &lt;reg8&gt;
+    ///
+    /// movzx &lt;reg16&gt;, &lt;mem8&gt;
+    ///
+    /// movzx &lt;reg32&gt;, &lt;reg8&gt;
+    ///
+    /// movzx &lt;reg32&gt;, &lt;mem8&gt;
+    ///
+    /// movzx &lt;reg32&gt;, &lt;reg16&gt;
+    ///
+    /// movzx &lt;reg32&gt;, &lt;mem16&gt;
+    fn movzx(&mut self) {
+        self.go_from_here(1);
+
+        if !self.expect_token_type(TokenType::REGISTER, "register".to_string(), false) {
+            return;
+        }
+
+        let destination = self.parse_register().unwrap();
+
+        if !self.expect_token_value(TokenValue::COMMA, ",".to_string(), true) {
+            return;
+        }
+
+        if !self.validate_token_type(TokenType::REGISTER, false) && !self.validate_token_value(TokenValue::BYTE, false)
+            && !self.validate_token_value(TokenValue::WORD, false) && !self.validate_token_value(TokenValue::DWORD,
+                    false) {
+            return;
+        }
+
+        let source = self.parse_source().unwrap();
+
+        if destination.2 <= source.2 {
+            panic!("Syntax Error: {} The destination is {} bytes, but source is {} bytes", self.text[self.get_eip() -
+                    1].get_token_location().to_string(), destination.2, source.2);
+        }
+
+        let mut bytes = [0; 4];
+        unsafe {
+
+            let (left, _right) = bytes.split_at_mut(source.2);
+            left.copy_from_slice(&(*source.0)[source.1..source.1 + source.2]);
+        }
+
+        self.set_value(destination, u32::from_le_bytes(bytes));
+    }
+
+    fn set_cf_and_of(&mut self, result: u32, size: usize) {
+        let tmp = result as i32;
+
+        match size {
+            1 => {
+                if result < std::u8::MIN as u32 || result > std::u8::MAX as u32 {
+                    self.cf = true;
+                }
+
+                if tmp < std::i8::MIN as i32 || tmp > std::i8::MAX as i32 {
+                    self.of = true;
+                }
+            },
+            2 => {
+                if result < std::u16::MIN as u32 || result > std::u16::MAX as u32{
+                    self.cf = true;
+                }
+
+                if tmp < std::i16::MIN as i32 || tmp > std::i16::MAX as i32 {
+                    self.of = true;
+                }
+            },
+            4 => {},
+            _ => panic!("Invaild length: {}", size),
+        }
+    }
+
+    fn set_sf_and_zf(&mut self, result: u32) {
+        let tmp = result as i32;
+
+        if tmp > 0 {
             self.sf = false;
             self.zf = false;
-        } else if result == 0 {
+        } else if tmp == 0 {
             self.sf = false;
             self.zf = true;
         } else {
@@ -493,7 +665,7 @@ impl VM {
     ///
     /// bop &lt;mem&gt;, &lt;con&gt;
     fn binary_operation(&mut self) {
-        let instruction = self.text[self.eip].to_owned();
+        let instruction = self.text[self.get_eip()].to_owned();
         self.go_from_here(1);
 
         let destination = self.parse_destination().unwrap();
@@ -502,16 +674,53 @@ impl VM {
             return;
         }
 
-        let result = match instruction.get_token_value() {
-            TokenValue::ADD => VM::get_value(destination) + self.parse_source().unwrap(),
-            TokenValue::SUB => VM::get_value(destination) - self.parse_source().unwrap(),
-            TokenValue::AND => VM::get_value(destination) & self.parse_source().unwrap(),
-            TokenValue::OR => VM::get_value(destination) | self.parse_source().unwrap(),
-            TokenValue::XOR => VM::get_value(destination) ^ self.parse_source().unwrap(),
-            _ => std::i32::MAX,
+        let source = self.parse_source().unwrap();
+
+        if source.2 != 0 && destination.2 < source.2 {
+            panic!("Syntax Error: {} The destination is {} bytes, but source is {} bytes", self.text[self.get_eip() -
+                    1].get_token_location().to_string(), destination.2, source.2);
+        }
+
+        let first_operand = VM::get_value(destination);
+        let second_operand = VM::get_value(source);
+        let result;
+        match instruction.get_token_value() {
+            TokenValue::ADD => {
+                let pair = first_operand.overflowing_add(second_operand);
+                result = pair.0;
+                self.cf = pair.1;
+                self.of = (first_operand as i32).overflowing_add(second_operand as i32).1;
+                self.set_cf_and_of(result, destination.2);
+            },
+            TokenValue::SUB => {
+                let pair = first_operand.overflowing_sub(second_operand);
+                result = pair.0;
+                self.cf = pair.1;
+                self.of = (first_operand as i32).overflowing_add(second_operand as i32).1;
+                self.set_cf_and_of(result, destination.2);
+            },
+            TokenValue::AND => {
+                result = first_operand & second_operand;
+                self.cf = false;
+                self.of = false;
+            },
+            TokenValue::OR => {
+                result = first_operand | second_operand;
+                self.cf = false;
+                self.of = false;
+            },
+            TokenValue::XOR => {
+                result = first_operand ^ second_operand;
+                self.cf = false;
+                self.of = false;
+            },
+            _ => {
+                result = std::u32::MAX;
+                self.error_report(&format!("Unexpected instruction: {}", instruction.get_token_name()));
+            },
         };
 
-        self.set_flag(result);
+        self.set_sf_and_zf(result);
 
         self.set_value(destination, result);
     }
@@ -543,22 +752,26 @@ impl VM {
         let result;
 
         if self.validate_token_value(TokenValue::COMMA, true) {
-            if !self.expect_token_type(TokenType::IMMEDIATE_DATA, "immedidate data".to_string(), false) {
+            if !self.validate_token_type(TokenType::IMMEDIATE_DATA, false) {
                 return;
             }
 
-            second_operand = self.text[self.eip].get_int_value();
+            second_operand = self.text[self.get_eip()].get_int_value();
             self.go_from_here(1);
 
-            result = VM::get_value(first_operand) * second_operand;
+            let pair = VM::get_value(first_operand).overflowing_mul(second_operand);
+            result = pair.0;
+            self.cf = pair.1;
 
-            self.set_flag(result);
+            // self.set_flag(result, destination.2);
 
             self.set_value(destination, result);
         } else {
-            result = VM::get_value(destination) * VM::get_value(first_operand);
+            let pair = VM::get_value(destination).overflowing_mul(VM::get_value(first_operand));
+            result = pair.0;
+            self.cf = pair.1;
 
-            self.set_flag(result);
+            // self.set_flag(result, destination.2);
 
             self.set_value(destination, result);
         }
@@ -569,6 +782,7 @@ impl VM {
     /// div &lt;reg32&gt;
     ///
     /// div &lt;mem&gt;
+    /*
     fn division(&mut self) {
         self.go_from_here(1);
 
@@ -579,7 +793,7 @@ impl VM {
 
         self.eax = (dividend / divisor as i64) as i32;
         self.edx = (dividend % divisor as i64) as i32;
-    }
+    }*/
 
     /// unary operation, including `inc`, `dec`, `not`, `neg`.
     ///
@@ -587,26 +801,45 @@ impl VM {
     ///
     /// uop &lt;mem&gt;
     fn unary_operation(&mut self) {
-        let instruction = self.text[self.eip].to_owned();
+        let instruction = self.text[self.get_eip()].to_owned();
         self.go_from_here(1);
 
         let destination = self.parse_destination().unwrap();
 
-        let result = match instruction.get_token_value() {
-            TokenValue::INC => VM::get_value(destination) + 1,
-            TokenValue::DEC => VM::get_value(destination) - 1,
-            TokenValue::NOT => !VM::get_value(destination),
-            TokenValue::NEG => -VM::get_value(destination),
-            _ => std::i32::MAX,
+        let operand = VM::get_value(destination);
+        let result;
+        match instruction.get_token_value() {
+            TokenValue::INC => {
+                result = operand.overflowing_add(1).0;
+                self.of = (operand as i32).overflowing_add(1).1;
+                self.set_cf_and_of(result, destination.2);
+            },
+            TokenValue::DEC => {
+                result = operand.overflowing_sub(1).0;
+                self.of = (operand as i32).overflowing_sub(1).1;
+                self.set_cf_and_of(result, destination.2);
+            },
+            TokenValue::NOT => {
+                result = !VM::get_value(destination);
+            },
+            TokenValue::NEG => {
+                let pair = VM::get_value(destination).overflowing_neg();
+                result = pair.0;
+                self.cf = pair.1;
+            },
+            _ => {
+                result = std::u32::MAX;
+                self.error_report(&format!("Unexpected instruction: {}", instruction.get_token_name()));
+            },
         };
 
-        self.set_flag(result);
+        self.set_sf_and_zf(result);
 
         self.set_value(destination, result);
     }
 
     fn bitshift(&mut self) {
-        let instruction = self.text[self.eip].to_owned();
+        let instruction = self.text[self.get_eip()].to_owned();
         self.go_from_here(1);
 
         let destination = self.parse_destination().unwrap();
@@ -619,22 +852,37 @@ impl VM {
             return;
         }
 
-        let operand = self.text[self.eip].get_int_value();
+        let operand = VM::get_value(destination) as u64;
+        let count = self.text[self.get_eip()].get_int_value();
         self.go_from_here(1);
 
-        if operand > std::u8::MAX as i32 {
-            self.error_report(&"Bitshift operand too big!".to_string());
-        }
-
-        let result = match instruction.get_token_value() {
-            TokenValue::SHL => VM::get_value(destination).overflowing_shl(operand.try_into().unwrap()).0,
-            TokenValue::SHR => VM::get_value(destination).overflowing_shr(operand.try_into().unwrap()).0,
-            _ => std::i32::MAX,
+        let result;
+        match instruction.get_token_value() {
+            TokenValue::SHL => {
+                result = operand.wrapping_shl(count);
+                self.cf = result & (1u64 << (8 * destination.2)) > 0;
+                self.of = (result & (1u64 << (8 * destination.2 - 1)) > 0) ^ self.cf;
+            },
+            TokenValue::SHR => {
+                result = operand.wrapping_shr(count);
+                self.cf = (result & 1u64) > 0;
+                self.of = operand >= (1u64 << (8 * destination.2 - 1));
+            },
+            TokenValue::SAR => {
+                let tmp: i64 = (operand as i32).try_into().unwrap();
+                result = tmp.wrapping_shr(count) as u64;
+                self.cf = (result & 1u64) > 0;
+                self.of = false;
+            },
+            _ => {
+                result = std::u64::MAX;
+                self.cf = false;
+            },
         };
 
-        self.set_flag(result);
+        self.set_sf_and_zf(result as u32);
 
-        self.set_value(destination, result);
+        self.set_value(destination, result as u32);
     }
 
     /// `push` instruction
@@ -647,8 +895,14 @@ impl VM {
     fn push(&mut self) {
         self.go_from_here(1);
 
-        self.esp = self.esp - 1;
-        self.stack[self.esp as usize] = self.parse_source().unwrap();
+        let source = self.parse_source().unwrap();
+
+        let old_esp = &mut self.esp as *mut [u8];
+        let old_stack = &mut self.stack as *mut [u8];
+
+        let new_esp = VM::get_value((old_esp, 0, 4)) - source.2 as u32;
+        self.set_value((old_esp, 0, 4), new_esp);
+        self.set_value((old_stack, new_esp as usize, source.2), VM::get_value(source));
     }
 
     /// `pop` instruction
@@ -661,8 +915,12 @@ impl VM {
 
         let destination = self.parse_destination().unwrap();
 
-        self.set_value(destination, self.stack[self.esp as usize]);
-        self.esp = self.esp + 1;
+        let old_esp = &mut self.esp as *mut [u8];
+
+        let value = VM::get_value((&mut self.stack as *mut [u8], VM::get_value((old_esp, 0, 4)) as usize, destination.2));
+        self.set_value(destination, value);
+        let new_esp = VM::get_value((old_esp, 0, 4)) + destination.2 as u32;
+        self.set_value((old_esp, 0, 4), new_esp);
     }
 
     /// `cmp` instruction
@@ -676,29 +934,36 @@ impl VM {
     fn cmp(&mut self) {
         self.go_from_here(1);
 
-        let operand = self.parse_destination().unwrap();
+        let mut operand = self.parse_destination().unwrap();
         let destination = VM::get_value(operand);
 
         if !self.expect_token_value(TokenValue::COMMA, ",".to_string(), true) {
             return;
         }
 
-        let source = self.parse_source().unwrap();
+        operand = self.parse_source().unwrap();
+        let source = VM::get_value(operand);
 
-        if destination > source{
+        if destination > source {
+            self.cf = false;
             self.sf = false;
             self.zf = false;
         } else if destination == source {
+            self.cf = false;
             self.sf = false;
             self.zf = true;
         } else if destination < source {
+            self.cf = true;
             self.sf = true;
             self.zf = false;
         }
+
+        let tmp = (destination as i32) - (source as i32);
+        self.of = ((destination as i32) * (source as i32) <= 0) & (tmp * (source as i32) > 0);
     }
 
     fn jump(&mut self) {
-        let instruction = self.text[self.eip].to_owned();
+        let instruction = self.text[self.get_eip()].to_owned();
 
         self.go_from_here(1);
 
@@ -706,7 +971,7 @@ impl VM {
             return;
         }
 
-        let displacement = self.text[self.eip].get_int_value();
+        let displacement = self.text[self.get_eip()].get_int_value() as i32;
         self.go_from_here(1);
 
         match instruction.get_token_value() {
@@ -724,22 +989,22 @@ impl VM {
                 }
             },
             TokenValue::JG => {
-                if !self.sf && !self.zf {
+                if !self.zf && self.sf == self.of {
                     self.go_from_here(displacement);
                 }
             },
             TokenValue::JGE => {
-                if !self.sf {
+                if self.sf == self.of {
                     self.go_from_here(displacement);
                 }
             },
             TokenValue::JL => {
-                if self.sf && !self.zf {
+                if self.sf != self.of {
                     self.go_from_here(displacement);
                 }
             },
             TokenValue::JLE => {
-                if self.sf {
+                if self.zf | self.sf != self.of {
                     self.go_from_here(displacement);
                 }
             },
@@ -757,28 +1022,50 @@ impl VM {
             return;
         }
 
-        let displacement = self.text[self.eip].get_int_value();
+        let displacement = self.text[self.get_eip()].get_int_value() as i32;
         self.go_from_here(1);
 
-        //println!("ebp: {}, esp: {}", self.ebp, self.esp);
-        self.esp = self.esp - 1;
-        self.stack[self.esp as usize] = self.eip as i32;
+        let old_esp = &mut self.esp as *mut [u8];
+        let old_stack = &mut self.stack as *mut [u8];
+
+        let new_esp = VM::get_value((old_esp, 0, 4)) - 4;
+        self.set_value((old_esp, 0, 4), new_esp);
+        self.set_value((old_stack, new_esp as usize, 4), self.get_eip() as u32);
+
+        self.depth = self.depth + 1;
 
         self.go_from_here(displacement);
     }
 
     /// `ret` instruction
     fn ret(&mut self) {
-        self.eip = self.stack[self.esp as usize] as usize;
-        self.esp = self.esp + 1;
+        self.go_from_here(1);
+
+        if self.depth > 1 {
+            let old_esp = &mut self.esp as *mut [u8];
+            let old_stack = &mut self.stack as *mut [u8];
+            let old_eip = &mut self.eip as *mut [u8];
+
+            let value = VM::get_value((old_stack, VM::get_value((old_esp, 0, 4)) as usize, 4));
+            self.set_value((old_eip, 0, 4), value);
+            let new_esp = VM::get_value((old_esp, 0, 4)) + 4;
+            self.set_value((old_esp, 0, 4), new_esp);
+        }
+
+        self.depth = self.depth - 1;
     }
 
     /// `enter` instruction
     fn enter(&mut self) {
         self.go_from_here(1);
 
-        self.esp = self.esp - 1;
-        self.stack[self.esp as usize] = self.ebp;
+        let old_esp = &mut self.esp as *mut [u8];
+        let old_stack = &mut self.stack as *mut [u8];
+        let old_ebp = &mut self.ebp as *mut [u8];
+
+        let new_esp = VM::get_value((old_esp, 0, 4)) - 4;
+        self.set_value((old_esp, 0, 4), new_esp);
+        self.set_value((old_stack, new_esp as usize, 4), VM::get_value((old_ebp, 0, 4)));
 
         self.ebp = self.esp;
     }
@@ -789,24 +1076,30 @@ impl VM {
 
         self.esp = self.ebp;
 
-        self.ebp = self.stack[self.esp as usize];
-        self.esp = self.esp + 1;
+        let old_esp = &mut self.esp as *mut [u8];
+        let old_stack = &mut self.stack as *mut [u8];
+        let old_ebp = &mut self.ebp as *mut [u8];
+
+        let value = VM::get_value((old_stack, VM::get_value((old_esp, 0, 4)) as usize, 4));
+        self.set_value((old_ebp, 0, 4), value);
+        let new_esp = VM::get_value((old_esp, 0, 4)) + 4;
+        self.set_value((old_esp, 0, 4), new_esp);
     }
 
-    pub fn get_eax(&self) -> i32 {
-        self.eax
+    pub fn get_eax(&self) -> u32 {
+        u32::from_le_bytes(self.eax)
     }
 
-    pub fn get_ebx(&self) -> i32 {
-        self.ebx
+    pub fn get_ebx(&self) -> u32 {
+        u32::from_le_bytes(self.ebx)
     }
 
-    pub fn get_ecx(&self) -> i32 {
-        self.ecx
+    pub fn get_ecx(&self) -> u32 {
+        u32::from_le_bytes(self.ecx)
     }
 
-    pub fn get_edx(&self) -> i32 {
-        self.edx
+    pub fn get_edx(&self) -> u32 {
+        u32::from_le_bytes(self.edx)
     }
 
     pub fn get_text(&self) -> Vec<Token> {
@@ -825,16 +1118,18 @@ impl VM {
         self.preprocess();
 
         loop {
-            match self.text[self.eip].get_token_type() {
+            match self.text[self.get_eip()].get_token_type() {
                 TokenType::INSTRUCTION => {
-                    match self.text[self.eip].get_token_value() {
+                    match self.text[self.get_eip()].get_token_value() {
                         TokenValue::MOV => self.mov(),
+                        TokenValue::MOVSX => self.movsx(),
+                        TokenValue::MOVZX => self.movzx(),
                         TokenValue::ADD | TokenValue::SUB | TokenValue::AND |
                             TokenValue::OR | TokenValue::XOR => self.binary_operation(),
                         TokenValue::MUL => self.multiplication(),
-                        TokenValue::DIV => self.division(),
+                        //TokenValue::DIV => self.division(),
                         TokenValue::INC | TokenValue::DEC | TokenValue::NOT | TokenValue::NEG => self.unary_operation(),
-                        TokenValue::SHL | TokenValue::SHR => self.bitshift(),
+                        TokenValue::SHL | TokenValue::SHR | TokenValue::SAR => self.bitshift(),
                         TokenValue::PUSH => self.push(),
                         TokenValue::POP => self.pop(),
                         TokenValue::CMP => self.cmp(),
@@ -845,17 +1140,20 @@ impl VM {
                         TokenValue::ENTER => self.enter(),
                         TokenValue::LEAVE => self.leave(),
                         TokenValue::INT => break,
-                        _ => {},
+                        _ => self.error_report(&format!("Unexpected instruction: {}",
+                                    self.text[self.get_eip()].get_token_name())),
                     }
                 },
                 TokenType::LABEL => {
-                    self.go_from_here(1);
-                    if !self.expect_token_value(TokenValue::COLON, ":".to_string(), true) {
-                    }
+                    self.go_from_here(2);
                 },
-                _ => panic!("{} Unexpected token: {}", self.text[self.eip].get_token_location().to_string(), self.text[self.eip].get_token_name()),
+                _ => self.error_report(&format!("Unexpected token: {}", self.text[self.get_eip()].get_token_name())),
             }
-            println!("ebp: {}, esp: {}", self.ebp, self.esp);
+
+            if self.depth == 0 {
+                break;
+            }
+            // println!("ebp: {}, esp: {}", self.get_ebp(), self.esp);
         }
     }
 }
