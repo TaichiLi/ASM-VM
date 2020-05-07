@@ -205,7 +205,8 @@ impl VM {
             if !flag {
                 match token.get_token_value() {
                     TokenValue::CALL | TokenValue::JMP | TokenValue::JE | TokenValue::JNE | TokenValue::JG | TokenValue::JGE |
-                        TokenValue::JL | TokenValue::JLE => {
+                        TokenValue::JL | TokenValue::JLE | TokenValue::JA | TokenValue::JAE | TokenValue::JB |
+                        TokenValue::JBE => {
                             flag = true;
                     },
                     _ => {},
@@ -725,16 +726,84 @@ impl VM {
         self.set_value(destination, result);
     }
 
-    /// `mul` instruction, only support for integer.
+    /// `mul` instruction
     ///
-    /// mul &lt;reg32&gt;, &lt;reg32&gt;
+    /// mul &lt;reg8&gt;
     ///
-    /// mul &lt;reg32&gt;, &lt;mem&gt;
+    /// mul &lt;mem8&gt;
     ///
-    /// mul &lt;reg32&gt;, &lt;reg32&gt;, &lt;con&gt;
+    /// mul &lt;reg16&gt;
     ///
-    /// mul &lt;reg32&gt;, &lt;mem&gt;, &lt;con &gt;
-    fn multiplication(&mut self) {
+    /// mul &lt;mem16&gt;
+    ///
+    /// mul &lt;reg32&gt;
+    ///
+    /// mul &lt;mem32&gt;
+    fn mul(&mut self) {
+        self.go_from_here(1);
+
+        let multiplier = self.parse_destination().unwrap();
+
+        match multiplier.2 {
+            1 => {
+                let multiplicand: u32 = self.eax[0].try_into().unwrap();
+                let result = multiplicand.wrapping_mul(VM::get_value(multiplier));
+                let old_eax = &mut self.eax as *mut [u8];
+                self.set_value((old_eax, 0, 2), result);
+                self.cf = result > 255;
+                self.of = self.cf;
+                self.set_sf_and_zf(result);
+            },
+            2 => {
+                let mut bytes = [0; 2];
+                &bytes.copy_from_slice(&self.eax[0..2]);
+                let multiplicand: u32 = u16::from_le_bytes(bytes).try_into().unwrap();
+                let result = multiplicand.wrapping_mul(VM::get_value(multiplier));
+                let old_eax = &mut self.eax as *mut [u8];
+                let old_edx = &mut self.edx as *mut [u8];
+                self.set_value((old_eax, 0, 2), result);
+                self.set_value((old_edx, 0, 2), result >> 16);
+                self.cf = result >= (1u32 << 16);
+                self.of = self.cf;
+                self.set_sf_and_zf(result);
+            },
+            4 => {
+                let multiplicand: u64 = u32::from_le_bytes(self.eax).try_into().unwrap();
+                let result = multiplicand.wrapping_mul(VM::get_value(multiplier) as u64);
+                let old_eax = &mut self.eax as *mut [u8];
+                let old_edx = &mut self.edx as *mut [u8];
+                self.set_value((old_eax, 0, 4), result as u32);
+                self.set_value((old_edx, 0, 4), (result >> 32) as u32);
+                self.cf = result >= (1u64 << 32);
+                self.of = self.cf;
+
+                let tmp = result as i64;
+
+                if tmp > 0 {
+                    self.sf = false;
+                    self.zf = false;
+                } else if tmp == 0 {
+                    self.sf = false;
+                    self.zf = true;
+                } else {
+                    self.sf = true;
+                    self.zf = false;
+                }
+            },
+            _ => {},
+        }
+    }
+
+    /// `imul` instruction, only support for integer.
+    ///
+    /// imul &lt;reg32&gt;, &lt;reg32&gt;
+    ///
+    /// imul &lt;reg32&gt;, &lt;mem&gt;
+    ///
+    /// imul &lt;reg32&gt;, &lt;reg32&gt;, &lt;con&gt;
+    ///
+    /// imul &lt;reg32&gt;, &lt;mem&gt;, &lt;con&gt;
+    fn imul(&mut self) {
         self.go_from_here(1);
 
         if !self.expect_token_type(TokenType::REGISTER, "register".to_string(), false) {
@@ -771,29 +840,102 @@ impl VM {
             result = pair.0;
             self.cf = pair.1;
 
-            // self.set_flag(result, destination.2);
-
             self.set_value(destination, result);
         }
     }
 
     /// `div` instruction
     ///
+    /// div &lt;reg8&gt;
+    ///
+    /// div &lt;mem8&gt;
+    ///
+    /// div &lt;reg16&gt;
+    ///
+    /// div &lt;mem16&gt;
+    ///
     /// div &lt;reg32&gt;
     ///
-    /// div &lt;mem&gt;
-    /*
-    fn division(&mut self) {
-        self.go_from_here(1);
+    /// div &lt;mem32&gt;
+    fn div(&mut self) {
+        let is_unsigned = self.validate_token_value(TokenValue::MUL, true);
 
-        let operand = self.parse_destination().unwrap();
-        let divisor = VM::get_value(operand);
+        let divisor = self.parse_destination().unwrap();
 
-        let dividend: i64 = (self.edx as i64).overflowing_shl(32).0  + self.eax as i64;
+        match divisor.2 {
+            1 => {
+                let mut bytes = [0; 2];
+                &bytes.copy_from_slice(&self.eax[0..2]);
+                let dividend = u16::from_le_bytes(bytes);
+                let quotient;
+                let remainder;
 
-        self.eax = (dividend / divisor as i64) as i32;
-        self.edx = (dividend % divisor as i64) as i32;
-    }*/
+                if is_unsigned {
+                    quotient = dividend.wrapping_div(VM::get_value(divisor) as u16);
+                    remainder = dividend.wrapping_rem(VM::get_value(divisor) as u16);
+                } else {
+                    quotient = (dividend as i16).wrapping_div(VM::get_value(divisor) as i16) as u16;
+                    remainder = (dividend as i16).wrapping_rem(VM::get_value(divisor) as i16) as u16;
+                }
+
+                let old_eax = &mut self.eax as *mut [u8];
+                let old_edx = &mut self.edx as *mut [u8];
+                self.set_value((old_eax, 0, 1), quotient as u32);
+                self.set_value((old_edx, 1, 1), remainder as u32);
+            },
+            2 => {
+                let mut bytes = [0; 4];
+                {
+                    let (left, right) = bytes.split_at_mut(2);
+                    left.copy_from_slice(&self.eax[0..2]);
+                    right.copy_from_slice(&self.edx[0..2]);
+                }
+
+                let dividend = u32::from_le_bytes(bytes);
+                let quotient;
+                let remainder;
+
+                if is_unsigned {
+                    quotient = dividend.wrapping_div(VM::get_value(divisor));
+                    remainder = dividend.wrapping_rem(VM::get_value(divisor));
+                } else {
+                    quotient = (dividend as i32).wrapping_div(VM::get_value(divisor) as i32) as u32;
+                    remainder = (dividend as i32).wrapping_rem(VM::get_value(divisor) as i32) as u32;
+                }
+
+                let old_eax = &mut self.eax as *mut [u8];
+                let old_edx = &mut self.edx as *mut [u8];
+                self.set_value((old_eax, 0, 2), quotient);
+                self.set_value((old_edx, 0, 2), remainder);
+            },
+            4 => {
+                let mut bytes = [0; 8];
+                {
+                    let (left, right) = bytes.split_at_mut(4);
+                    left.copy_from_slice(&self.eax);
+                    right.copy_from_slice(&self.edx);
+                }
+
+                let dividend = u64::from_le_bytes(bytes);
+                let quotient;
+                let remainder;
+
+                if is_unsigned {
+                    quotient = dividend.wrapping_div(VM::get_value(divisor) as u64);
+                    remainder = dividend.wrapping_rem(VM::get_value(divisor) as u64);
+                } else {
+                    quotient = (dividend as i64).wrapping_div(VM::get_value(divisor) as i64) as u64;
+                    remainder = (dividend as i64).wrapping_rem(VM::get_value(divisor) as i64) as u64;
+                }
+
+                let old_eax = &mut self.eax as *mut [u8];
+                let old_edx = &mut self.edx as *mut [u8];
+                self.set_value((old_eax, 0, 4), quotient as u32);
+                self.set_value((old_edx, 0, 4), remainder as u32);
+            },
+            _ => {},
+        }
+    }
 
     /// unary operation, including `inc`, `dec`, `not`, `neg`.
     ///
@@ -934,32 +1076,55 @@ impl VM {
     fn cmp(&mut self) {
         self.go_from_here(1);
 
-        let mut operand = self.parse_destination().unwrap();
-        let destination = VM::get_value(operand);
+        let destination = self.parse_destination().unwrap();
+        let first_operand = VM::get_value(destination);
 
         if !self.expect_token_value(TokenValue::COMMA, ",".to_string(), true) {
             return;
         }
 
-        operand = self.parse_source().unwrap();
-        let source = VM::get_value(operand);
+        let source = self.parse_source().unwrap();
+        let second_operand = VM::get_value(source);
 
-        if destination > source {
+        if first_operand > second_operand {
             self.cf = false;
-            self.sf = false;
             self.zf = false;
-        } else if destination == source {
+        } else if first_operand == second_operand {
             self.cf = false;
-            self.sf = false;
             self.zf = true;
-        } else if destination < source {
+        } else {
             self.cf = true;
-            self.sf = true;
             self.zf = false;
         }
 
-        let tmp = (destination as i32) - (source as i32);
-        self.of = ((destination as i32) * (source as i32) <= 0) & (tmp * (source as i32) > 0);
+        let mut bytes;
+        unsafe {
+            if (*destination.0)[destination.1 + destination.2 - 1] >= 128 {
+                bytes = [0xff; 4];
+            } else {
+                bytes = [0x00; 4];
+            }
+
+            let (left, _right) = bytes.split_at_mut(destination.2);
+            left.copy_from_slice(&(*destination.0)[destination.1..destination.1 + destination.2]);
+        }
+        let first_operand = i32::from_le_bytes(bytes);
+
+        unsafe {
+            if (*source.0)[source.1 + source.2 - 1] >= 128 {
+                bytes = [0xff; 4];
+            } else {
+                bytes = [0x00; 4];
+            }
+
+            let (left, _right) = bytes.split_at_mut(source.2);
+            left.copy_from_slice(&(*source.0)[source.1..source.1 + source.2]);
+        }
+        let second_operand = i32::from_le_bytes(bytes);
+        self.sf = first_operand < second_operand;
+
+        let tmp = first_operand - second_operand;
+        self.of = (first_operand * second_operand <= 0) & (tmp * second_operand > 0);
     }
 
     fn jump(&mut self) {
@@ -1004,7 +1169,27 @@ impl VM {
                 }
             },
             TokenValue::JLE => {
-                if self.zf | self.sf != self.of {
+                if self.zf || self.sf != self.of {
+                    self.go_from_here(displacement);
+                }
+            },
+            TokenValue::JA => {
+                if !self.cf && !self.zf {
+                    self.go_from_here(displacement);
+                }
+            },
+            TokenValue::JAE => {
+                if !self.cf {
+                    self.go_from_here(displacement);
+                }
+            },
+            TokenValue::JB => {
+                if self.cf {
+                    self.go_from_here(displacement);
+                }
+            },
+            TokenValue::JBE => {
+                if self.cf || self.zf {
                     self.go_from_here(displacement);
                 }
             },
@@ -1126,15 +1311,16 @@ impl VM {
                         TokenValue::MOVZX => self.movzx(),
                         TokenValue::ADD | TokenValue::SUB | TokenValue::AND |
                             TokenValue::OR | TokenValue::XOR => self.binary_operation(),
-                        TokenValue::MUL => self.multiplication(),
-                        //TokenValue::DIV => self.division(),
+                        TokenValue::MUL => self.mul(),
+                        TokenValue::IMUL => self.imul(),
+                        TokenValue::DIV | TokenValue::IDIV => self.div(),
                         TokenValue::INC | TokenValue::DEC | TokenValue::NOT | TokenValue::NEG => self.unary_operation(),
                         TokenValue::SHL | TokenValue::SHR | TokenValue::SAR => self.bitshift(),
                         TokenValue::PUSH => self.push(),
                         TokenValue::POP => self.pop(),
                         TokenValue::CMP => self.cmp(),
                         TokenValue::JMP | TokenValue::JE | TokenValue::JNE | TokenValue::JG | TokenValue::JGE | TokenValue::JL |
-                            TokenValue::JLE => self.jump(),
+                            TokenValue::JLE | TokenValue::JA | TokenValue::JAE | TokenValue::JB | TokenValue::JBE => self.jump(),
                         TokenValue::CALL => self.call(),
                         TokenValue::RET => self.ret(),
                         TokenValue::ENTER => self.enter(),
@@ -1153,7 +1339,6 @@ impl VM {
             if self.depth == 0 {
                 break;
             }
-            // println!("ebp: {}, esp: {}", self.get_ebp(), self.esp);
         }
     }
 }
