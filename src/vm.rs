@@ -5,16 +5,12 @@ use std::vec::Vec;
 use std::result::Result;
 use std::convert::TryInto;
 
-const MAX: usize = 1024 * 1024;
-// const BYTE: u32= 0b1111_1111_1111_1111_1111_1111_0000_0000;
-// const WORD: u32 = 0b1111_1111_1111_1111_0000_0000_0000_0000;
+const MAX: usize = 2 * 1024 * 1024;
 
 /// Visual Machine for x86 assembly
 pub struct VM {
     /// simulate the `stack`
     stack: [u8; MAX],
-    /// simulate the `memory`
-    memory: [u8; MAX],
     /// simulate the `text`
     text: Vec<Token>,
     /// label location table, to implement `call` instruction.
@@ -53,13 +49,38 @@ pub struct VM {
     error_flag_: bool,
 }
 
+impl Default for VM {
+    fn default() -> Self {
+        VM {
+            stack: [0; MAX],
+            text: Vec::new(),
+            index: HashMap::new(),
+            eax: [0; 4],
+            ebx: [0; 4],
+            ecx: [0; 4],
+            edx: [0; 4],
+            esi: [0; 4],
+            edi: [0; 4],
+            esp: ((MAX - 1) as u32).to_le_bytes(),
+            ebp: ((MAX - 1) as u32).to_le_bytes(),
+            eip: [0; 4],
+            cf: false,
+            zf: false,
+            sf: false,
+            of: false,
+            scanner: Default::default(),
+            depth: 1,
+            error_flag_: false,
+        }
+    }
+}
+
 #[allow(dead_code)]
 impl VM {
     /// New VM from a assembly source file.
     pub fn new(source_file_name: String) -> Self {
         VM {
             stack: [0; MAX],
-            memory: [0; MAX],
             text: Vec::new(),
             index: HashMap::new(),
             eax: [0; 4],
@@ -153,7 +174,7 @@ impl VM {
     fn go_from_here(&mut self, displacement: i32) {
         let value: u32 = match (self.get_eip() as i32 + displacement).try_into() {
             Ok(value) => value,
-            Err(err) => panic!("Invaild memory address: {}", err),
+            Err(err) => panic!("Invaild instruction address: {}", err),
         };
 
         self.eip = value.to_le_bytes();
@@ -268,9 +289,15 @@ impl VM {
     }
 
     fn get_value((pointer, start, size): (*mut [u8], usize, usize)) -> u32 {
-        let mut value = [0; 4];
+        let mut value;
 
         unsafe {
+            if (*pointer)[start + size - 1] >= 0x80 {
+                value = [0xff; 4];
+            } else {
+                value = [0x00; 4];
+            }
+
             let (left, _right) = value.split_at_mut(size);
             left.copy_from_slice(&(*pointer)[start..start + size]);
         }
@@ -413,8 +440,8 @@ impl VM {
             return Err("Missing left brack '[' !".to_string());
         }
 
-        let mem_add: usize = match self.parse_address().try_into() {
-            Ok(mem_add) => mem_add,
+        let memory_address: usize = match self.parse_address().try_into() {
+            Ok(memory_address) => memory_address,
             Err(err) => panic!("Invaild memory address: {}", err),
         };
 
@@ -422,7 +449,7 @@ impl VM {
             return Err("Missing right brack ']' !".to_string());
         }
 
-        return Ok((&mut self.memory as *mut [u8], mem_add, size));
+        return Ok((&mut self.stack as *mut [u8], memory_address, size));
     }
 
     fn parse_source(&mut self) -> Result<(*mut [u8], usize, usize), String> {
@@ -1271,6 +1298,20 @@ impl VM {
         self.set_value((old_esp, 0, 4), new_esp);
     }
 
+    fn reset(&mut self) {
+        self.text.clear();
+        self.index.clear();
+        self.esp = ((MAX - 1) as u32).to_le_bytes();
+        self.esp = ((MAX - 1) as u32).to_le_bytes();
+        self.eip = [0; 4];
+        self.cf = false;
+        self.zf = false;
+        self.sf = false;
+        self.of = false;
+        self.depth = 1;
+        self.error_flag_ = false;
+    }
+
     pub fn get_eax(&self) -> u32 {
         u32::from_le_bytes(self.eax)
     }
@@ -1291,7 +1332,7 @@ impl VM {
         self.text.to_owned()
     }
 
-    /// Run vm.
+    /// Run virtual machine.
     ///
     /// # Examples
     ///
@@ -1301,6 +1342,11 @@ impl VM {
     /// ```
     pub fn run(&mut self) {
         self.preprocess();
+
+        if self.text.len() == 0 {
+            eprintln!("Source file is empty!");
+            return;
+        }
 
         loop {
             match self.text[self.get_eip()].get_token_type() {
@@ -1341,5 +1387,21 @@ impl VM {
             }
         }
     }
+
+    /// Run virtual machine with source file.
+    /// # Example
+    ///
+    /// ```
+    /// let vm = VM::new("./test1.asm".to_string());
+    /// vm.run_file("./test2.asm".to_string());
+    /// ```
+    pub fn run_file(&mut self, source_file_name: String) {
+        self.reset();
+
+        self.scanner = Scanner::new(source_file_name);
+
+        self.run();
+    }
+
 }
 

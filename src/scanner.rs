@@ -2,6 +2,7 @@ use crate::token::*;
 use std::fs::File;
 use std::io::prelude::*;
 use std::io::SeekFrom;
+use std::collections::HashMap;
 
 #[allow(non_camel_case_types)]
 /// State of lexical analysis
@@ -16,16 +17,36 @@ enum State {
 /// Lexical scanner
 pub struct Scanner {
     source_file_name_: String,
-    file_: File,
+    file_: Option<File>,
     line_: i32,
     column_: i32,
     loc_: TokenLocation,
     current_char_: char,
+    dictionary_: HashMap<String, (TokenType, TokenValue)>,
     state_: State,
     token_: Token,
     buffer_: String,
     eof_flag_: bool,
     error_flag_: bool,
+}
+
+impl Default for Scanner {
+    fn default() -> Self {
+        Scanner {
+            source_file_name_: Default::default(),
+            file_: Default::default(),
+            line_: 1,
+            column_: 0,
+            loc_: Default::default(),
+            current_char_: Default::default(),
+            dictionary_: Default::default(),
+            state_: State::NONE,
+            token_: Default::default(),
+            buffer_: Default::default(),
+            eof_flag_: false,
+            error_flag_: false,
+        }
+    }
 }
 
 impl Scanner {
@@ -37,13 +58,92 @@ impl Scanner {
             Ok(file) => file,
         };
 
+        let mut dictionary = HashMap::new();
+        dictionary.insert("mov".to_string(), (TokenType::INSTRUCTION, TokenValue::MOV));
+        dictionary.insert("movzx".to_string(), (TokenType::INSTRUCTION, TokenValue::MOVZX));
+        dictionary.insert("movsx".to_string(), (TokenType::INSTRUCTION, TokenValue::MOVSX));
+        dictionary.insert("add".to_string(), (TokenType::INSTRUCTION, TokenValue::ADD));
+        dictionary.insert("sub".to_string(), (TokenType::INSTRUCTION, TokenValue::SUB));
+        dictionary.insert("inc".to_string(), (TokenType::INSTRUCTION, TokenValue::INC));
+        dictionary.insert("dec".to_string(), (TokenType::INSTRUCTION, TokenValue::DEC));
+        dictionary.insert("mul".to_string(), (TokenType::INSTRUCTION, TokenValue::MUL));
+        dictionary.insert("imul".to_string(), (TokenType::INSTRUCTION, TokenValue::IMUL));
+        dictionary.insert("div".to_string(), (TokenType::INSTRUCTION, TokenValue::DIV));
+        dictionary.insert("idiv".to_string(), (TokenType::INSTRUCTION, TokenValue::IDIV));
+        dictionary.insert("and".to_string(), (TokenType::INSTRUCTION, TokenValue::AND));
+        dictionary.insert("or".to_string(), (TokenType::INSTRUCTION, TokenValue::OR));
+        dictionary.insert("xor".to_string(), (TokenType::INSTRUCTION, TokenValue::XOR));
+        dictionary.insert("not".to_string(), (TokenType::INSTRUCTION, TokenValue::NOT));
+        dictionary.insert("neg".to_string(), (TokenType::INSTRUCTION, TokenValue::NEG));
+        dictionary.insert("push".to_string(), (TokenType::INSTRUCTION, TokenValue::PUSH));
+        dictionary.insert("pop".to_string(), (TokenType::INSTRUCTION, TokenValue::POP));
+        dictionary.insert("shl".to_string(), (TokenType::INSTRUCTION, TokenValue::SHL));
+        dictionary.insert("sal".to_string(), (TokenType::INSTRUCTION, TokenValue::SHL));
+        dictionary.insert("shr".to_string(), (TokenType::INSTRUCTION, TokenValue::SHR));
+        dictionary.insert("sar".to_string(), (TokenType::INSTRUCTION, TokenValue::SAR));
+        dictionary.insert("cmp".to_string(), (TokenType::INSTRUCTION, TokenValue::CMP));
+        dictionary.insert("jmp".to_string(), (TokenType::INSTRUCTION, TokenValue::JMP));
+        dictionary.insert("je".to_string(), (TokenType::INSTRUCTION, TokenValue::JE));
+        dictionary.insert("jz".to_string(), (TokenType::INSTRUCTION, TokenValue::JE));
+        dictionary.insert("jne".to_string(), (TokenType::INSTRUCTION, TokenValue::JNE));
+        dictionary.insert("jnz".to_string(), (TokenType::INSTRUCTION, TokenValue::JNE));
+        dictionary.insert("jg".to_string(), (TokenType::INSTRUCTION, TokenValue::JG));
+        dictionary.insert("jnle".to_string(), (TokenType::INSTRUCTION, TokenValue::JG));
+        dictionary.insert("jge".to_string(), (TokenType::INSTRUCTION, TokenValue::JGE));
+        dictionary.insert("jnl".to_string(), (TokenType::INSTRUCTION, TokenValue::JGE));
+        dictionary.insert("jl".to_string(), (TokenType::INSTRUCTION, TokenValue::JL));
+        dictionary.insert("jnge".to_string(), (TokenType::INSTRUCTION, TokenValue::JL));
+        dictionary.insert("jle".to_string(), (TokenType::INSTRUCTION, TokenValue::JLE));
+        dictionary.insert("jng".to_string(), (TokenType::INSTRUCTION, TokenValue::JLE));
+        dictionary.insert("ja".to_string(), (TokenType::INSTRUCTION, TokenValue::JA));
+        dictionary.insert("jnbe".to_string(), (TokenType::INSTRUCTION, TokenValue::JA));
+        dictionary.insert("jae".to_string(), (TokenType::INSTRUCTION, TokenValue::JAE));
+        dictionary.insert("jnb".to_string(), (TokenType::INSTRUCTION, TokenValue::JAE));
+        dictionary.insert("jb".to_string(), (TokenType::INSTRUCTION, TokenValue::JB));
+        dictionary.insert("jnae".to_string(), (TokenType::INSTRUCTION, TokenValue::JB));
+        dictionary.insert("jbe".to_string(), (TokenType::INSTRUCTION, TokenValue::JBE));
+        dictionary.insert("jna".to_string(), (TokenType::INSTRUCTION, TokenValue::JBE));
+        dictionary.insert("call".to_string(), (TokenType::INSTRUCTION, TokenValue::CALL));
+        dictionary.insert("ret".to_string(), (TokenType::INSTRUCTION, TokenValue::RET));
+        dictionary.insert("enter".to_string(), (TokenType::INSTRUCTION, TokenValue::ENTER));
+        dictionary.insert("leave".to_string(), (TokenType::INSTRUCTION, TokenValue::LEAVE));
+        dictionary.insert("eax".to_string(), (TokenType::REGISTER, TokenValue::EAX));
+        dictionary.insert("ax".to_string(), (TokenType::REGISTER, TokenValue::AX));
+        dictionary.insert("ah".to_string(), (TokenType::REGISTER, TokenValue::AH));
+        dictionary.insert("al".to_string(), (TokenType::REGISTER, TokenValue::AL));
+        dictionary.insert("ebx".to_string(), (TokenType::REGISTER, TokenValue::EBX));
+        dictionary.insert("bx".to_string(), (TokenType::REGISTER, TokenValue::BX));
+        dictionary.insert("bh".to_string(), (TokenType::REGISTER, TokenValue::BH));
+        dictionary.insert("bl".to_string(), (TokenType::REGISTER, TokenValue::BL));
+        dictionary.insert("ecx".to_string(), (TokenType::REGISTER, TokenValue::ECX));
+        dictionary.insert("cx".to_string(), (TokenType::REGISTER, TokenValue::CX));
+        dictionary.insert("ch".to_string(), (TokenType::REGISTER, TokenValue::CH));
+        dictionary.insert("cl".to_string(), (TokenType::REGISTER, TokenValue::CL));
+        dictionary.insert("edx".to_string(), (TokenType::REGISTER, TokenValue::EDX));
+        dictionary.insert("dx".to_string(), (TokenType::REGISTER, TokenValue::DX));
+        dictionary.insert("dh".to_string(), (TokenType::REGISTER, TokenValue::DH));
+        dictionary.insert("dl".to_string(), (TokenType::REGISTER, TokenValue::DL));
+        dictionary.insert("esi".to_string(), (TokenType::REGISTER, TokenValue::ESI));
+        dictionary.insert("si".to_string(), (TokenType::REGISTER, TokenValue::SI));
+        dictionary.insert("edi".to_string(), (TokenType::REGISTER, TokenValue::EDI));
+        dictionary.insert("di".to_string(), (TokenType::REGISTER, TokenValue::DI));
+        dictionary.insert("esp".to_string(), (TokenType::REGISTER, TokenValue::ESP));
+        dictionary.insert("sp".to_string(), (TokenType::REGISTER, TokenValue::SP));
+        dictionary.insert("ebp".to_string(), (TokenType::REGISTER, TokenValue::EBP));
+        dictionary.insert("bp".to_string(), (TokenType::REGISTER, TokenValue::BP));
+        dictionary.insert("ptr".to_string(), (TokenType::KEYWORD, TokenValue::PTR));
+        dictionary.insert("byte".to_string(), (TokenType::KEYWORD, TokenValue::BYTE));
+        dictionary.insert("word".to_string(), (TokenType::KEYWORD, TokenValue::WORD));
+        dictionary.insert("dword".to_string(), (TokenType::KEYWORD, TokenValue::DWORD));
+
         Scanner {
             source_file_name_: source_file_name.to_owned(),
-            file_: file,
+            file_: Some(file),
             line_: 1,
             column_: 0,
             loc_: TokenLocation::new(source_file_name, 1, 0),
             current_char_: Default::default(),
+            dictionary_: dictionary,
             state_: State::NONE,
             token_: Default::default(),
             buffer_: Default::default(),
@@ -80,7 +180,7 @@ impl Scanner {
     /// Get one char from source file and advance the sequence.
     fn get_next_char(&mut self) {
         let mut buffer = [0; 1];
-        match self.file_.read_exact(&mut buffer) {
+        match self.file_.as_ref().unwrap().read_exact(&mut buffer) {
             Err(_e) => {
                 self.eof_flag_ = true;
                 self.current_char_ = std::char::MAX;
@@ -99,11 +199,11 @@ impl Scanner {
     /// Get one char from source file without advancing the sequence.
     fn get_peek_char(&mut self) -> char {
         let mut buffer = [0; 1];
-        match self.file_.read_exact(&mut buffer) {
+        match self.file_.as_ref().unwrap().read_exact(&mut buffer) {
             Err(_e) => self.eof_flag_ = true,
             Ok(()) => buffer[0] = std::u8::MAX,
         };
-        self.file_.seek(SeekFrom::Current(-1)).unwrap();
+        self.file_.as_ref().unwrap().seek(SeekFrom::Current(-1)).unwrap();
         buffer[0].into()
     }
 
@@ -113,8 +213,8 @@ impl Scanner {
     }
 
     fn error_token(&mut self, msg: &String) {
-        eprintln!("{}", msg);
         self.error_flag_ = true;
+        panic!("{}", msg);
     }
 
     fn error_report(&mut self, msg: &String) {
@@ -137,15 +237,32 @@ impl Scanner {
         }
     }
 
+    fn handle_directive(&mut self) {
+        self.loc_ = self.get_token_location();
+
+        if self.current_char_ == '.' {
+            self.get_next_char();
+
+            while self.current_char_ != '\n' && !self.eof_flag_ {
+                self.get_next_char();
+            }
+
+            if !self.eof_flag_ {
+                self.get_next_char();
+            }
+        }
+    }
+
     fn preprocess(&mut self) {
         loop {
             while self.current_char_.is_ascii_whitespace() && !self.eof_flag_ {
                 self.get_next_char();
             }
 
+            self.handle_directive();
             self.handle_comment();
 
-            if !(self.current_char_.is_ascii_whitespace() || self.current_char_ == ';') || self.eof_flag_ {
+            if !(self.current_char_.is_ascii_whitespace() || self.current_char_ == ';' || self.current_char_ == '.') || self.eof_flag_ {
                 break;
             }
         }
@@ -160,7 +277,11 @@ impl Scanner {
     /// let token = scanner.get_token();
     /// ```
     pub fn get_token(&self) -> Token {
-        self.token_.to_owned()
+        if self.file_.is_some() {
+            self.token_.to_owned()
+        } else {
+            panic!("Source File has not been set!");
+        }
     }
 
     /// Get the next token.
@@ -171,6 +292,10 @@ impl Scanner {
     /// let token = scanner.get_next_token();
     /// ```
     pub fn get_next_token(&mut self) -> Token {
+        if self.file_.is_none() {
+            panic!("Source file has not been set!");
+        }
+
         let mut matched;
 
         loop {
@@ -313,283 +438,10 @@ impl Scanner {
             self.get_next_char();
         }
 
-        let token_type;
-        let token_value;
-
-        match self.buffer_.to_lowercase().as_str() {
-            "mov" => {
-                token_type = TokenType::INSTRUCTION;
-                token_value = TokenValue::MOV;
-            },
-            "movzx" => {
-                token_type = TokenType::INSTRUCTION;
-                token_value = TokenValue::MOVZX;
-            },
-            "movsx" => {
-                token_type = TokenType::INSTRUCTION;
-                token_value = TokenValue::MOVSX;
-            },
-            "add" => {
-                token_type = TokenType::INSTRUCTION;
-                token_value = TokenValue::ADD;
-            },
-            "sub" => {
-                token_type = TokenType::INSTRUCTION;
-                token_value = TokenValue::SUB;
-            },
-            "inc" => {
-                token_type = TokenType::INSTRUCTION;
-                token_value = TokenValue::INC;
-            },
-            "dec" => {
-                token_type = TokenType::INSTRUCTION;
-                token_value = TokenValue::DEC;
-            },
-            "mul" => {
-                token_type = TokenType::INSTRUCTION;
-                token_value = TokenValue::MUL;
-            },
-            "imul" => {
-                token_type = TokenType::INSTRUCTION;
-                token_value = TokenValue::IMUL;
-            },
-            "div" => {
-                token_type = TokenType::INSTRUCTION;
-                token_value = TokenValue::DIV;
-            },
-            "idiv" => {
-                token_type = TokenType::INSTRUCTION;
-                token_value = TokenValue::IDIV;
-            },
-            "and" => {
-                token_type = TokenType::INSTRUCTION;
-                token_value = TokenValue::AND;
-            },
-            "or" => {
-                token_type = TokenType::INSTRUCTION;
-                token_value = TokenValue::OR;
-            },
-            "xor" => {
-                token_type = TokenType::INSTRUCTION;
-                token_value = TokenValue::XOR;
-            },
-            "not" => {
-                token_type = TokenType::INSTRUCTION;
-                token_value = TokenValue::NOT;
-            },
-            "neg" => {
-                token_type = TokenType::INSTRUCTION;
-                token_value = TokenValue::NEG;
-            },
-            "push" => {
-                token_type = TokenType::INSTRUCTION;
-                token_value = TokenValue::PUSH;
-            },
-            "pop" => {
-                token_type = TokenType::INSTRUCTION;
-                token_value = TokenValue::POP;
-            },
-            "shl"| "sal" => {
-                token_type = TokenType::INSTRUCTION;
-                token_value = TokenValue::SHL;
-            },
-            "shr" => {
-                token_type = TokenType::INSTRUCTION;
-                token_value = TokenValue::SHR;
-            },
-            "sar" => {
-                token_type = TokenType::INSTRUCTION;
-                token_value = TokenValue::SAR;
-            },
-            "cmp" => {
-                token_type = TokenType::INSTRUCTION;
-                token_value = TokenValue::CMP;
-            },
-            "jmp" => {
-                token_type = TokenType::INSTRUCTION;
-                token_value = TokenValue::JMP;
-            },
-            "je" | "jz" => {
-                token_type = TokenType::INSTRUCTION;
-                token_value = TokenValue::JE;
-            },
-            "jne" | "jnz" => {
-                token_type = TokenType::INSTRUCTION;
-                token_value = TokenValue::JNE;
-            },
-            "jg" | "jnle" => {
-                token_type = TokenType::INSTRUCTION;
-                token_value = TokenValue::JG;
-            },
-            "jge" | "jnl" => {
-                token_type = TokenType::INSTRUCTION;
-                token_value = TokenValue::JGE;
-            },
-            "jl" | "jnge" => {
-                token_type = TokenType::INSTRUCTION;
-                token_value = TokenValue::JL;
-            },
-            "jle" | "jng" => {
-                token_type = TokenType::INSTRUCTION;
-                token_value = TokenValue::JLE;
-            },
-            "ja" | "jnbe" => {
-                token_type = TokenType::INSTRUCTION;
-                token_value = TokenValue::JA;
-            },
-            "jae" | "jnb" => {
-                token_type = TokenType::INSTRUCTION;
-                token_value = TokenValue::JAE;
-            },
-            "jb" | "jnae" => {
-                token_type = TokenType::INSTRUCTION;
-                token_value = TokenValue::JB;
-            },
-            "jbe" | "jna" => {
-                token_type = TokenType::INSTRUCTION;
-                token_value = TokenValue::JBE;
-            },
-            "call" => {
-                token_type = TokenType::INSTRUCTION;
-                token_value = TokenValue::CALL;
-            },
-            "ret" => {
-                token_type = TokenType::INSTRUCTION;
-                token_value = TokenValue::RET;
-            },
-            "enter" => {
-                token_type = TokenType::INSTRUCTION;
-                token_value = TokenValue::ENTER;
-            },
-            "leave" => {
-                token_type = TokenType::INSTRUCTION;
-                token_value = TokenValue::LEAVE;
-            },
-            "int" => {
-                token_type = TokenType::INSTRUCTION;
-                token_value = TokenValue::INT;
-            },
-            "eax" => {
-                token_type = TokenType::REGISTER;
-                token_value = TokenValue::EAX;
-            },
-            "ax" => {
-                token_type = TokenType::REGISTER;
-                token_value = TokenValue::AX;
-            },
-            "ah" => {
-                token_type = TokenType::REGISTER;
-                token_value = TokenValue::AH;
-            },
-            "al" => {
-                token_type = TokenType::REGISTER;
-                token_value = TokenValue::AL;
-            },
-            "ebx" => {
-                token_type = TokenType::REGISTER;
-                token_value = TokenValue::EBX;
-            },
-            "bx" => {
-                token_type = TokenType::REGISTER;
-                token_value = TokenValue::BX;
-            },
-            "bh" => {
-                token_type = TokenType::REGISTER;
-                token_value = TokenValue::BH;
-            },
-            "bl" => {
-                token_type = TokenType::REGISTER;
-                token_value = TokenValue::BL;
-            },
-            "ecx" => {
-                token_type = TokenType::REGISTER;
-                token_value = TokenValue::ECX;
-            },
-            "cx" => {
-                token_type = TokenType::REGISTER;
-                token_value = TokenValue::CX;
-            },
-            "ch" => {
-                token_type = TokenType::REGISTER;
-                token_value = TokenValue::CH;
-            },
-            "cl" => {
-                token_type = TokenType::REGISTER;
-                token_value = TokenValue::CL;
-            },
-            "edx" => {
-                token_type = TokenType::REGISTER;
-                token_value = TokenValue::EDX;
-            },
-            "dx" => {
-                token_type = TokenType::REGISTER;
-                token_value = TokenValue::DX;
-            },
-            "dh" => {
-                token_type = TokenType::REGISTER;
-                token_value = TokenValue::DH;
-            },
-            "dl" => {
-                token_type = TokenType::REGISTER;
-                token_value = TokenValue::DL;
-            },
-            "esi" => {
-                token_type = TokenType::REGISTER;
-                token_value = TokenValue::ESI;
-            },
-            "si" => {
-                token_type = TokenType::REGISTER;
-                token_value = TokenValue::SI;
-            },
-            "edi" => {
-                token_type = TokenType::REGISTER;
-                token_value = TokenValue::EDI;
-            },
-            "di" => {
-                token_type = TokenType::REGISTER;
-                token_value = TokenValue::DI;
-            },
-            "esp" => {
-                token_type = TokenType::REGISTER;
-                token_value = TokenValue::ESP;
-            },
-            "sp" => {
-                token_type = TokenType::REGISTER;
-                token_value = TokenValue::SP;
-            },
-            "ebp" => {
-                token_type = TokenType::REGISTER;
-                token_value = TokenValue::EBP;
-            },
-            "bp" => {
-                token_type = TokenType::REGISTER;
-                token_value = TokenValue::BP;
-            },
-            "eip" => {
-                token_type = TokenType::REGISTER;
-                token_value = TokenValue::EIP;
-            },
-            "ptr" => {
-                token_type = TokenType::KEYWORD;
-                token_value = TokenValue::PTR;
-            },
-            "byte" => {
-                token_type = TokenType::KEYWORD;
-                token_value = TokenValue::BYTE;
-            },
-            "word" => {
-                token_type = TokenType::KEYWORD;
-                token_value = TokenValue::WORD;
-            },
-            "dword" => {
-                token_type = TokenType::KEYWORD;
-                token_value = TokenValue::DWORD;
-            },
-            _ => {
-                token_type = TokenType::LABEL;
-                token_value = TokenValue::LABEL;
-            },
-        }
+        let (token_type, token_value) = match self.dictionary_.get(&self.buffer_.to_lowercase()) {
+            Some(info) => *info,
+            None => (TokenType::LABEL, TokenValue::LABEL),
+        };        
 
         self.make_token(token_type, token_value, self.loc_.to_owned(), self.buffer_.to_owned());
     }

@@ -31,10 +31,10 @@ fn main() {
         Ok(file) => file,
     };
 
-    let mut vm = VM::new(args[1].to_owned());
+    let mut vm: VM = Default::default();
 
-    vm.run();
     /*
+    vm.run();
     loop {
         match scanner.get_token().get_token_type() {
             TokenType::END_OF_FILE => break,
@@ -42,7 +42,10 @@ fn main() {
         }
 
         file.write_all(format!("{}\n",scanner.get_next_token().to_string()).as_bytes()).unwrap();
-    }*/
+    }
+    */
+
+    vm.run_file(args[1].to_string());
 
     let tokens = vm.get_text();
     for token in tokens {
